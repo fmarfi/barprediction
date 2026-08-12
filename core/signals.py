@@ -59,13 +59,37 @@ def _emit(
     return out
 
 
+def fib_events(
+    close: pd.Series, levels: dict[str, float], window: pd.DatetimeIndex
+) -> list[Event]:
+    """Closes crossing a Fibonacci level inside the predicted window."""
+    out: list[Event] = []
+    for label, price in levels.items():
+        up, dn = _crosses(close, float(price))
+        ratio = float(label)
+        tag = "projection" if ratio > 1 else "retracement"
+        out += _emit(
+            up, window, "Fibonacci",
+            f"closed above the {label} {tag}", "bullish", close,
+        )
+        out += _emit(
+            dn, window, "Fibonacci",
+            f"closed below the {label} {tag}", "bearish", close,
+        )
+    return out
+
+
 def collect(
     active: dict[str, dict[str, pd.Series]],
     close: pd.Series,
     window: pd.DatetimeIndex,
+    fib: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """Scan every active indicator for events landing in `window`."""
     events: list[Event] = []
+
+    if fib:
+        events += fib_events(close, fib, window)
 
     for name, series_map in active.items():
         if name == "Parabolic SAR":

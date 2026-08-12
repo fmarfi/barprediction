@@ -1,6 +1,15 @@
 """Core library for the BIST bar-scenario tool."""
 
-from . import charting, data, indicators, predictors, resample, signals, store
+from . import (
+    charting,
+    data,
+    indicators,
+    predictors,
+    resample,
+    signals,
+    store,
+    trends,
+)
 
 __all__ = [
     "charting",
@@ -10,4 +19,5 @@ __all__ = [
     "resample",
     "signals",
     "store",
+    "trends",
 ]

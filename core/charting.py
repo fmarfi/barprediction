@@ -67,6 +67,7 @@ def build(
     crosshair: bool = False,
     unified_hover: bool = False,
     events: pd.DataFrame | None = None,
+    overlay_shapes: dict | None = None,
     height_price: int = 520,
     height_panel: int = 165,
 ) -> go.Figure:
@@ -159,6 +160,9 @@ def build(
         )
 
     _add_overlays(fig, overlays)
+
+    if overlay_shapes:
+        _add_trend_and_fib(fig, overlay_shapes, t)
 
     if events is not None and not events.empty and not predicted.empty:
         _add_event_markers(fig, events, predicted, t)
@@ -317,6 +321,97 @@ def _tag_last(
         borderpad=2,
         opacity=0.95,
     )
+
+
+FIB_COLORS = {
+    "0": "#8e99ab",
+    "0.236": "#4aa3df",
+    "0.382": "#37a86b",
+    "0.5": "#e0a020",
+    "0.618": "#e05c3a",
+    "0.786": "#9b5cc9",
+    "1": "#8e99ab",
+}
+FIB_PROJECTION = "#7e8aa0"
+
+
+def _add_trend_and_fib(fig: go.Figure, shapes: dict, t: dict) -> None:
+    """Draw the impulse leg, its trend line, and its Fibonacci grid."""
+    imp = shapes.get("impulse")
+
+    for name, line in (shapes.get("trend_lines") or {}).items():
+        fig.add_trace(
+            go.Scatter(
+                x=line.index,
+                y=line,
+                mode="lines",
+                name=name,
+                line=dict(width=1.2, color="#5fa8d3", dash="longdash"),
+                hovertemplate="%{y:.2f}<extra>" + name + "</extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    if imp is not None:
+        # The leg itself, so it is obvious what the levels are measured from.
+        fig.add_trace(
+            go.Scatter(
+                x=[_dt(imp.start_ts), _dt(imp.end_ts)],
+                y=[imp.start_price, imp.end_price],
+                mode="lines+markers",
+                name=f"impulse {imp.pct:+.1f}%",
+                line=dict(width=1.8, color="#d8dee9"),
+                marker=dict(size=7, symbol="circle-open", line=dict(width=1.6)),
+                hovertemplate="%{y:.2f}<extra>impulse</extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    levels = shapes.get("levels") or {}
+    if not levels:
+        return
+
+    x0 = _dt(shapes["span"][0])
+    x1 = _dt(shapes["span"][1])
+    for label, price in levels.items():
+        projection = float(label) > 1.0
+        color = FIB_PROJECTION if projection else FIB_COLORS.get(label, "#8e99ab")
+        fig.add_shape(
+            type="line",
+            x0=x0,
+            x1=x1,
+            y0=price,
+            y1=price,
+            line=dict(
+                color=color,
+                width=1.6 if label in ("0.382", "0.5", "0.618") else 1,
+                dash="dot" if projection else "solid",
+            ),
+            opacity=0.75,
+            layer="below",
+            row=1,
+            col=1,
+        )
+        # Labels go on the left edge of the plot, not at the start of the
+        # level. A short leg sits far to the right, where the labels would
+        # pile onto each other and onto the candles.
+        fig.add_annotation(
+            xref="paper",
+            x=0.0,
+            xanchor="left",
+            xshift=3,
+            yref="y",
+            y=price,
+            text=f"{label}   {price:,.2f}",
+            showarrow=False,
+            yanchor="middle",
+            font=dict(size=9, color=color),
+            bgcolor=t["tag_bg"],
+            borderpad=1,
+            opacity=0.92,
+        )
 
 
 def _add_event_markers(

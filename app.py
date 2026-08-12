@@ -21,6 +21,7 @@ from core import (
     resample,
     signals,
     store,
+    trends,
 )
 
 st.set_page_config(
@@ -41,6 +42,7 @@ PERIODS = ["6mo", "1y", "2y", "5y", "10y", "max"]
 MAX_HORIZON = 250
 
 INDICATORS = [
+    "Trend & Fibonacci",
     "Parabolic SAR",
     "Moving averages",
     "RSI",
@@ -312,6 +314,35 @@ with st.sidebar:
     st.subheader("Indicator settings")
     st.caption("Switch indicators on above the chart; tune them here.")
 
+    with st.expander("Trend & Fibonacci"):
+        swing_n = st.slider(
+            "Swing sensitivity", 1, 15, 4,
+            help="Bars either side a pivot must beat. Higher finds fewer, "
+            "bigger swings.",
+        )
+        fib_anchor = st.radio(
+            "Leg", ["Auto (last impulse)", "Pick bars"], horizontal=True
+        )
+        fib_from = fib_to = 0
+        if fib_anchor == "Pick bars":
+            fib_from = st.number_input(
+                "From (bars back)", 1, 500, 60, step=1,
+                help="Counted back from the last historical bar.",
+            )
+            fib_to = st.number_input("To (bars back)", 0, 500, 0, step=1)
+        fib_ratios = st.multiselect(
+            "Retracements",
+            [f"{r:g}" for r in trends.RETRACEMENTS],
+            default=["0", "0.382", "0.5", "0.618", "1"],
+        )
+        fib_projs = st.multiselect(
+            "Projections",
+            [f"{r:g}" for r in trends.PROJECTIONS],
+            default=["1.618"],
+            help="Targets beyond the end of the leg, in its direction.",
+        )
+        show_trendline = st.checkbox("Trend line through pivots", True)
+
     with st.expander("Parabolic SAR"):
         sar_af0 = st.number_input("Step (AF start)", 0.001, 0.5, 0.02, step=0.005, format="%.3f")
         sar_step = st.number_input("Increment", 0.001, 0.5, 0.02, step=0.005, format="%.3f")
@@ -567,19 +598,70 @@ if "QQE" in chosen:
     panels.append(("QQE", m))
     active["QQE"] = m
 
+# ------------------------------------------------- trend and Fibonacci
+
+fib_levels: dict[str, float] = {}
+overlay_shapes: dict = {}
+
+if "Trend & Fibonacci" in chosen:
+    # Detected on history alone: the levels are a reference your scenario is
+    # measured against, so they must not move as you redraw the bars.
+    imp = (
+        trends.last_impulse(hist, int(swing_n), int(swing_n))
+        if fib_anchor == "Auto (last impulse)"
+        else trends.manual_impulse(
+            hist, len(hist) - 1 - int(fib_from), len(hist) - 1 - int(fib_to)
+        )
+    )
+    if imp is None:
+        st.info(
+            "No swing found at this sensitivity — lower it, or pick the "
+            "leg by hand in the sidebar."
+        )
+    else:
+        fib_levels = trends.fib_levels(
+            imp,
+            retracements=tuple(float(r) for r in fib_ratios),
+            projections=tuple(float(r) for r in fib_projs),
+        )
+        overlay_shapes = {
+            "impulse": imp,
+            "levels": fib_levels,
+            # Extend across the scenario so you can see what your bars hit.
+            "span": (imp.start_ts, full.index[-1]),
+            "trend_lines": {},
+        }
+        if show_trendline:
+            anchors = trends.trend_line(hist, int(swing_n), int(swing_n))
+            if anchors is not None:
+                overlay_shapes["trend_lines"] = {
+                    "trend": trends.project(anchors, full.index)
+                }
+
 # ------------------------------------------------------------------ chart
 
 # Computed before the chart so the same events drive both the on-chart
 # markers and the table underneath.
 events = (
-    signals.collect(active, full["Close"], pred.index)
-    if active
+    signals.collect(active, full["Close"], pred.index, fib=fib_levels)
+    if (active or fib_levels)
     else pd.DataFrame()
 )
 
 view_hist = hist.tail(int(show_tail))
 view_from = view_hist.index[0]
 overlays_v = {k: v.loc[v.index >= view_from] for k, v in overlays.items()}
+
+# Trend lines are clipped to the view like any other overlay; the Fibonacci
+# grid keeps its own span so the levels stay anchored to the leg even when
+# the leg itself has scrolled off the left edge.
+shapes_v = dict(overlay_shapes)
+if shapes_v.get("trend_lines"):
+    shapes_v["trend_lines"] = {
+        k: v.loc[v.index >= view_from] for k, v in shapes_v["trend_lines"].items()
+    }
+if shapes_v.get("span"):
+    shapes_v["span"] = (max(shapes_v["span"][0], view_from), shapes_v["span"][1])
 panels_v = [
     (n, {k: v.loc[v.index >= view_from] for k, v in m.items() if k != "trend"})
     for n, m in panels
@@ -603,6 +685,7 @@ fig = charting.build(
     crosshair=crosshair,
     unified_hover=unified_hover,
     events=events,
+    overlay_shapes=shapes_v,
 )
 st.plotly_chart(
     fig,

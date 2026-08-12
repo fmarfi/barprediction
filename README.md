@@ -36,6 +36,7 @@ Three tabs under the chart:
 
 | Indicator | Notes |
 |---|---|
+| Trend & Fibonacci | Swing pivots, the live impulse leg, retracements and projections |
 | Parabolic SAR | Wilder's, with AF start/increment/max configurable |
 | Moving averages | Stack up to four; SMA / EMA / WMA / RMA, any period |
 | RSI | Wilder smoothing (RMA), not a plain EMA |
@@ -55,6 +56,37 @@ EMA and reports a percentage. Use PPO to compare symbols trading at different
 price levels; a 200-point MACD means something very different on XU100 at
 13,700 than on a 30-lira stock. `test_our_ppo_is_macd_normalised` pins the
 relationship.
+
+### Trends and Fibonacci
+
+Everything hangs off one detected leg, so the pieces agree with each other —
+a Fibonacci grid anchored to a different swing than the trend line beside it
+is worse than none at all.
+
+1. **Swing pivots** are fractals: a high with *n* lower highs either side.
+   The **Swing sensitivity** slider is that *n* — raise it for fewer, larger
+   swings.
+2. **The impulse leg** runs from the last confirmed pivot to the running
+   extreme since. A pivot needs *n* bars of confirmation, so the far end of
+   the leg price is working on right now is never itself a confirmed pivot —
+   and that is exactly the leg worth measuring. Falling back to two confirmed
+   pivots would always draw you a stale leg.
+3. **Retracements** run from the end of the leg (`0`) back to its start
+   (`1`). **Projections** continue past the end in the leg's direction, so
+   `1.618` on a rally from 100 to 200 sits at 261.8.
+4. **The trend line** joins the last two pivots of the same kind — lows in an
+   uptrend, highs in a downtrend — and extends *forward only*. Running it
+   backwards is arithmetically fine and visually useless: a steep line thrown
+   back across months leaves the chart and drags the y-axis with it.
+
+The levels are computed from **history alone**, never from your drawn bars,
+so they stay put as you redraw — they are the reference you are measuring
+against. Crossings inside your scenario show up in **Triggered signals**
+alongside the indicator events, so you can ask "does my scenario reach the
+1.618 projection?" and get an answer.
+
+Pick the leg by hand with **Leg → Pick bars** when the automatic choice is
+not the swing you had in mind.
 
 ### Are they correct?
 
