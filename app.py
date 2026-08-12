@@ -10,7 +10,15 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core import charting, data, indicators as ind, predictors, signals
+from core import (
+    charting,
+    data,
+    indicators as ind,
+    predictors,
+    resample,
+    signals,
+    store,
+)
 
 st.set_page_config(
     page_title="BIST Bar Prediction", layout="wide", initial_sidebar_state="expanded"
@@ -29,6 +37,8 @@ INDICATORS = [
     "Parabolic SAR",
     "Moving averages",
     "RSI",
+    "MACD",
+    "DMI / ADX",
     "Stochastic",
     "Price Oscillator",
     "QQE",
@@ -82,10 +92,30 @@ with st.sidebar:
         interval = col_a.selectbox("Interval", INTERVALS, index=0)
         period = col_b.selectbox("History", PERIODS, index=2)
 
+    # A queued load has to be resolved here, before the horizon slider is
+    # created: Streamlit refuses to let a widget's state be written once the
+    # widget exists, and loading a scenario changes the bar count.
+    if st.session_state.get("_pending_load"):
+        try:
+            sc = store.load(st.session_state.pop("_pending_load"))
+            conv = resample.convert(sc.bars, sc.interval, interval)
+            st.session_state["_loaded_bars"] = conv
+            st.session_state["horizon"] = int(min(max(len(conv), 1), 60))
+            st.session_state["_load_note"] = (
+                f"Loaded “{sc.name}” ({sc.symbol} {sc.interval})"
+                + (
+                    f" → converted to {len(conv)} × {interval} bars"
+                    if sc.interval != interval
+                    else ""
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            st.session_state["_load_error"] = str(e)
+
     st.divider()
     st.subheader("Bars to predict")
 
-    horizon = st.slider("How many bars", 1, 30, 5)
+    horizon = st.slider("How many bars", 1, 60, 5, key="horizon")
     src_name = st.selectbox(
         "Bar source", predictors.names(), index=0,
         help="How the bars are seeded. You can edit any of them afterwards.",
@@ -112,6 +142,36 @@ with st.sidebar:
             )
 
     regen = st.button("Reseed bars", width="stretch", type="secondary")
+
+    st.divider()
+    st.subheader("Saved scenarios")
+
+    saved = store.list_all()
+    if saved:
+        pick = st.selectbox(
+            "Load a scenario",
+            ["—"] + [sc.label for sc in saved],
+            help="Scenarios saved at another interval are converted to the "
+            "current one on load.",
+        )
+        chosen_sc = next((sc for sc in saved if sc.label == pick), None)
+        if chosen_sc is not None:
+            if chosen_sc.interval != interval:
+                st.caption(
+                    resample.describe(chosen_sc.bars, chosen_sc.interval, interval)
+                )
+            lc, dc = st.columns(2)
+            if lc.button("Load", width="stretch", type="primary"):
+                st.session_state["_pending_load"] = chosen_sc.name
+                st.rerun()
+            if dc.button("Delete", width="stretch"):
+                store.delete(chosen_sc.name)
+                st.rerun()
+    else:
+        st.caption("None saved yet.")
+
+    save_name = st.text_input("Save current bars as", "", placeholder="e.g. breakout")
+    do_save = st.button("Save", width="stretch", disabled=not save_name.strip())
 
     st.divider()
     st.subheader("Indicator settings")
@@ -143,6 +203,15 @@ with st.sidebar:
 
     with st.expander("RSI"):
         rsi_len = st.number_input("Length", 2, 100, 14, step=1)
+
+    with st.expander("MACD"):
+        macd_fast = st.number_input("Fast", 2, 100, 12, step=1, key="macd_fast")
+        macd_slow = st.number_input("Slow", 3, 200, 26, step=1, key="macd_slow")
+        macd_sig = st.number_input("Signal", 1, 50, 9, step=1, key="macd_sig")
+
+    with st.expander("DMI / ADX"):
+        dmi_len = st.number_input("DI length", 2, 100, 14, step=1)
+        adx_len = st.number_input("ADX smoothing", 2, 100, 14, step=1)
 
     with st.expander("Stochastic"):
         st_k = st.number_input("%K length", 1, 100, 14, step=1)
@@ -220,7 +289,18 @@ fut_idx = data.future_index(series, horizon)
 # ------------------------------------------------- predicted bars (state)
 
 key = _seed_key(symbol, interval, horizon, hist.index[-1])
-if regen or st.session_state.get("_key") != key or "bars" not in st.session_state:
+
+loaded = st.session_state.pop("_loaded_bars", None)
+if loaded is not None:
+    # Re-anchor onto the current future index; the saved timestamps belong
+    # to whenever the scenario was drawn.
+    n = min(len(loaded), len(fut_idx))
+    frame = loaded.iloc[:n].copy()
+    frame.index = fut_idx[:n]
+    frame.index.name = "Date"
+    st.session_state["bars"] = predictors.sanitize(frame)
+    st.session_state["_key"] = key
+elif regen or st.session_state.get("_key") != key or "bars" not in st.session_state:
     st.session_state["_key"] = key
     st.session_state["bars"] = predictors.build(src_name, **cfg).propose(hist, fut_idx)
 elif st.session_state.get("_src") != (src_name, tuple(sorted(cfg.items()))):
@@ -228,6 +308,18 @@ elif st.session_state.get("_src") != (src_name, tuple(sorted(cfg.items()))):
 st.session_state["_src"] = (src_name, tuple(sorted(cfg.items())))
 
 pred = st.session_state["bars"]
+
+if note := st.session_state.pop("_load_note", None):
+    st.success(note, icon="✅")
+if err := st.session_state.pop("_load_error", None):
+    st.error(f"Could not load scenario: {err}")
+
+if do_save:
+    try:
+        p = store.save(save_name, symbol, interval, pred)
+        st.success(f"Saved “{save_name}” → {p.name}", icon="💾")
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Could not save: {e}")
 
 # ------------------------------------------------------------ header strip
 
@@ -284,6 +376,16 @@ if "RSI" in chosen:
     panels.append(("RSI", m))
     active["RSI"] = m
 
+if "MACD" in chosen:
+    m = ind.macd(full, int(macd_fast), int(macd_slow), int(macd_sig))
+    panels.append(("MACD", m))
+    active["MACD"] = m
+
+if "DMI / ADX" in chosen:
+    m = ind.dmi(full, int(dmi_len), int(adx_len))
+    panels.append(("DMI / ADX", m))
+    active["DMI / ADX"] = m
+
 if "Stochastic" in chosen:
     m = ind.stochastic(full, int(st_k), int(st_sk), int(st_d))
     panels.append(("Stochastic", m))
@@ -302,6 +404,14 @@ if "QQE" in chosen:
     active["QQE"] = m
 
 # ------------------------------------------------------------------ chart
+
+# Computed before the chart so the same events drive both the on-chart
+# markers and the table underneath.
+events = (
+    signals.collect(active, full["Close"], pred.index)
+    if active
+    else pd.DataFrame()
+)
 
 view_hist = hist.tail(int(show_tail))
 view_from = view_hist.index[0]
@@ -328,6 +438,7 @@ fig = charting.build(
     dark=is_dark,
     crosshair=crosshair,
     unified_hover=unified_hover,
+    events=events,
 )
 st.plotly_chart(
     fig,
@@ -375,16 +486,19 @@ with sig_col:
     if not active:
         st.caption("Pick indicators above the chart to detect events.")
     else:
-        ev = signals.collect(active, full["Close"], pred.index)
+        ev = events
         if ev.empty:
             st.caption("Nothing fires inside your predicted bars.")
             st.success("No indicator events triggered by this scenario.")
         else:
             bull = int((ev["Bias"] == "bullish").sum())
             bear = int((ev["Bias"] == "bearish").sum())
-            st.caption(f"{len(ev)} event(s) — {bull} bullish, {bear} bearish.")
+            st.caption(
+                f"{len(ev)} event(s) — {bull} bullish, {bear} bearish. "
+                "Marked on the chart with triangles."
+            )
             st.dataframe(
-                ev,
+                ev.drop(columns=["_ts"]),
                 width="stretch",
                 hide_index=True,
                 height=min(38 * (len(ev) + 1) + 8, 460),

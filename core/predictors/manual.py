@@ -21,21 +21,24 @@ class FlatPredictor(Predictor):
     editable = True
     params = (
         Param(
-            "body",
-            "Body size (% of last close)",
+            "wick_pct",
+            "Wick size (% of last close)",
             0.0,
             "float",
             min=0.0,
             max=10.0,
             step=0.1,
-            help="Opens a small candle body so the bars are visible before you edit.",
+            help="Stretches high and low above and below the flat close, so "
+            "each bar is a visible doji you can see and click. Open and "
+            "close stay equal, so this adds no direction.",
         ),
     )
 
     def propose(self, history: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
         close = float(history["Close"].iloc[-1])
         vol = float(history["Volume"].tail(20).mean() or 0.0)
-        pad = close * float(self.config["body"]) / 100.0
+        # Open == Close, so the body has no height; this only sets the wicks.
+        pad = close * float(self.config["wick_pct"]) / 100.0
 
         rows = []
         for _ in index:

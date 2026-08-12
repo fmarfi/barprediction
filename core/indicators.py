@@ -150,6 +150,91 @@ def price_oscillator(
 
 
 # --------------------------------------------------------------------------
+# MACD
+# --------------------------------------------------------------------------
+
+
+def macd(
+    df: pd.DataFrame,
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+    source: str = "Close",
+) -> dict[str, pd.Series]:
+    """Moving Average Convergence Divergence.
+
+    The absolute-difference sibling of the Price Oscillator: MACD is in price
+    units, PPO expresses the same spread as a percentage. PPO is the one to
+    use when comparing symbols at different price levels.
+    """
+    src = df[source].astype("float64")
+    line = ema(src, fast) - ema(src, slow)
+    # Signal is seeded from the first defined MACD value, not from the NaNs
+    # ahead of it, which is why the EMA runs on the dropped series.
+    sig = ema(line.dropna(), signal).reindex(line.index)
+    return {
+        f"MACD({fast},{slow})": line,
+        f"Signal({signal})": sig,
+        "Histogram": line - sig,
+    }
+
+
+# --------------------------------------------------------------------------
+# Directional movement: +DI, -DI, ADX
+# --------------------------------------------------------------------------
+
+
+def true_range(df: pd.DataFrame) -> pd.Series:
+    prev_close = df["Close"].shift(1)
+    return pd.concat(
+        [
+            df["High"] - df["Low"],
+            (df["High"] - prev_close).abs(),
+            (df["Low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+
+def atr(df: pd.DataFrame, length: int = 14) -> pd.Series:
+    return rma(true_range(df), length).rename(f"ATR({length})")
+
+
+def dmi(
+    df: pd.DataFrame, length: int = 14, adx_length: int = 14
+) -> dict[str, pd.Series]:
+    """Wilder's Directional Movement Index: +DI, -DI and ADX.
+
+    Directional movement counts only the larger of the two range expansions:
+    a bar that extends further up than down contributes +DM and no -DM, and
+    an inside bar contributes neither.
+    """
+    up = df["High"].diff()
+    down = -df["Low"].diff()
+
+    plus_dm = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+
+    tr = rma(true_range(df), length)
+    # A zero ATR means a run of identical bars; leave DI undefined rather
+    # than dividing by zero.
+    safe_tr = tr.replace(0.0, np.nan)
+
+    plus_di = 100.0 * rma(plus_dm, length) / safe_tr
+    minus_di = 100.0 * rma(minus_dm, length) / safe_tr
+
+    total = plus_di + minus_di
+    dx = 100.0 * (plus_di - minus_di).abs() / total.replace(0.0, np.nan)
+    adx = rma(dx, adx_length)
+
+    return {
+        f"+DI({length})": plus_di,
+        f"-DI({length})": minus_di,
+        f"ADX({adx_length})": adx,
+    }
+
+
+# --------------------------------------------------------------------------
 # Parabolic SAR
 # --------------------------------------------------------------------------
 
@@ -325,6 +410,16 @@ REGISTRY: dict[str, dict] = {
         "fn": rsi,
         "overlay": False,
         "params": {"length": 14},
+    },
+    "MACD": {
+        "fn": macd,
+        "overlay": False,
+        "params": {"fast": 12, "slow": 26, "signal": 9},
+    },
+    "DMI / ADX": {
+        "fn": dmi,
+        "overlay": False,
+        "params": {"length": 14, "adx_length": 14},
     },
     "Stochastic": {
         "fn": stochastic,

@@ -39,13 +39,45 @@ Three tabs under the chart:
 | Parabolic SAR | Wilder's, with AF start/increment/max configurable |
 | Moving averages | Stack up to four; SMA / EMA / WMA / RMA, any period |
 | RSI | Wilder smoothing (RMA), not a plain EMA |
+| MACD | Absolute EMA spread, with signal line and coloured histogram |
+| DMI / ADX | Wilder's +DI, -DI and ADX, with the conventional 25 line |
 | Stochastic | Slow by default; set %K smoothing to 1 for fast |
 | Price Oscillator | PPO (percentage) or absolute, with signal line and histogram |
 | QQE | Smoothed RSI plus its volatility-scaled trailing stop |
 
-RSI and QQE use Wilder's RMA because that is what their authors specified — an
-EMA of the same period gives visibly different numbers and would not line up
-with a TradingView or MetaTrader chart.
+RSI, QQE and DMI use Wilder's RMA because that is what their authors
+specified — an EMA of the same period gives visibly different numbers and
+would not line up with a TradingView or MetaTrader chart.
+
+**MACD vs Price Oscillator** are the same measurement on different scales:
+MACD is `EMA(fast) - EMA(slow)` in price units, PPO divides that by the slow
+EMA and reports a percentage. Use PPO to compare symbols trading at different
+price levels; a 200-point MACD means something very different on XU100 at
+13,700 than on a 30-lira stock. `test_our_ppo_is_macd_normalised` pins the
+relationship.
+
+### Are they correct?
+
+Two suites, both runnable without a network:
+
+```
+python tests/test_indicators.py        # 18 reference-value and invariant checks
+python tests/test_cross_validation.py  # 8 checks against the independent `ta` library
+```
+
+The cross-validation compares against [`ta`](https://pypi.org/project/ta/), a
+separate implementation by a different author. MACD, Stochastic, ATR and the
+PPO/MACD identity agree to **0.00e+00**; ADX correlates at **1.0000** and
++DI/-DI dominance agrees on **100%** of bars; Parabolic SAR lands within 1% on
+**99.4%** (it is path dependent, so a different seed direction on bar one can
+shift a whole leg).
+
+RSI deliberately does *not* match `ta`. Wilder seeds the average gain/loss
+with an SMA of the first `length` changes; `ta` starts its EWM at bar one. On
+the StockCharts reference series Wilder's hand-computed first value is
+`70.46413502109705` — we return exactly that, `ta` returns `71.80`. The gap is
+a seeding artefact that decays to ~3e-08 by bar 250, and both behaviours are
+pinned by tests.
 
 ## Adding a different prediction style
 
@@ -87,6 +119,48 @@ tests/test_indicators.py   Reference-value and invariant checks
 ```
 
 Run the checks with `python tests/test_indicators.py`.
+
+## Saving scenarios and switching timeframes
+
+**Save** names the bars currently in the table and writes them to
+`scenarios/<name>.json` along with the symbol and the interval they were
+drawn at. **Load** brings them back; **Delete** removes the file.
+
+Because the interval is stored, a scenario drawn on one timeframe can be
+loaded onto another. Draw three weekly bars, switch the chart to `1d`, load
+it back, and each week is expanded into five daily bars that still add up to
+what you drew:
+
+```
+first daily open   == the weekly open
+last daily close   == the weekly close
+max of daily highs == the weekly high
+min of daily lows  == the weekly low
+```
+
+The closes in between walk a straight line from open to close, so filling the
+gaps never invents swings you did not draw. `test_upsampled_closes_are_monotonic`
+enforces that; `test_round_trip_weekly_daily_weekly_is_identity` checks the
+conversion is lossless both ways. Going the other direction (daily → weekly)
+is ordinary OHLC aggregation, and a short final group still becomes a bar.
+
+Ratios are in trading bars, not calendar time: a week is 5 sessions, a month
+21. Intraday↔daily conversion is **refused** rather than guessed, because the
+ratio depends on session length.
+
+> On Streamlit Community Cloud the filesystem is ephemeral — saved scenarios
+> survive a page reload but not a reboot or redeploy. Locally they persist.
+> `scenarios/` is gitignored, so your scenarios stay yours.
+
+## Reading the chart
+
+- Prices sit on the **right**, trading-platform style.
+- Each line gets a **badge** on the right axis showing its current value.
+- **Triangles** mark bars where indicator events fire — green/up for bullish,
+  red/down for bearish. Hover one to see every event on that bar.
+- The scenario region is **shaded**, so drawn bars never read as real history.
+- **Zoom the y axis on its own** by dragging the price axis up or down;
+  double-click to autoscale. Scroll zooms both axes, drag pans.
 
 ## If the chart feels slow
 

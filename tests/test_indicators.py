@@ -192,6 +192,68 @@ def test_qqe_trailing_is_monotonic_within_a_leg():
             assert v[i] <= v[i - 1] + 1e-9, f"short band rose at {i}"
 
 
+def test_macd_histogram_is_line_minus_signal():
+    df = _frame(100 + np.cumsum(np.random.default_rng(4).normal(0, 1, 200)))
+    m = ind.macd(df, 12, 26, 9)
+    line, sig, hist = m["MACD(12,26)"], m["Signal(9)"], m["Histogram"]
+    both = pd.concat([line - sig, hist], axis=1).dropna()
+    assert len(both) > 100
+    np.testing.assert_allclose(both.iloc[:, 0], both.iloc[:, 1], atol=1e-12)
+
+
+def test_macd_sign_follows_trend():
+    rising = _frame(100 * np.exp(np.linspace(0, 0.5, 150)))
+    assert (ind.macd(rising)["MACD(12,26)"].dropna() > 0).all()
+    falling = _frame(100 * np.exp(np.linspace(0, -0.5, 150)))
+    assert (ind.macd(falling)["MACD(12,26)"].dropna() < 0).all()
+
+
+def test_dmi_bounds_and_direction():
+    rng = np.random.default_rng(9)
+    close = 100 + np.cumsum(rng.normal(0, 1, 300))
+    df = _frame(close, close + 1.2, close - 1.2)
+    d = ind.dmi(df, 14, 14)
+    plus, minus, adx = d["+DI(14)"], d["-DI(14)"], d["ADX(14)"]
+
+    for name, s in (("+DI", plus), ("-DI", minus), ("ADX", adx)):
+        v = s.dropna()
+        assert len(v) > 100, name
+        assert v.between(0, 100).all(), f"{name} out of range"
+
+    # A clean uptrend must put +DI above -DI.
+    up = np.linspace(100, 200, 120)
+    updf = _frame(up, up + 0.8, up - 0.8)
+    u = ind.dmi(updf, 14, 14)
+    assert (u["+DI(14)"].dropna() > u["-DI(14)"].dropna()).all()
+
+    down = np.linspace(200, 100, 120)
+    dndf = _frame(down, down + 0.8, down - 0.8)
+    v = ind.dmi(dndf, 14, 14)
+    assert (v["-DI(14)"].dropna() > v["+DI(14)"].dropna()).all()
+
+
+def test_dmi_inside_bars_produce_no_directional_movement():
+    # Progressively narrowing bars: no new highs or lows, so DM stays zero
+    # and DI must collapse toward zero rather than divide by nothing.
+    n = 60
+    close = np.full(n, 100.0)
+    high = 100 + np.linspace(5, 0.5, n)
+    low = 100 - np.linspace(5, 0.5, n)
+    df = _frame(close, high, low)
+    d = ind.dmi(df, 14, 14)
+    tail = d["+DI(14)"].dropna()
+    assert len(tail) > 10
+    assert np.isfinite(tail.to_numpy()).all()
+    assert tail.iloc[-1] < 5.0, tail.iloc[-1]
+
+
+def test_atr_is_positive_and_tracks_range():
+    df = _frame([10, 12, 11, 15, 13, 18, 14, 20, 16, 22] * 5)
+    a = ind.atr(df, 14).dropna()
+    assert len(a) > 20
+    assert (a > 0).all()
+
+
 def test_moving_averages():
     s = pd.Series(np.arange(1, 11, dtype="float64"))
     assert np.isclose(ind.sma(s, 5).iloc[-1], 8.0)

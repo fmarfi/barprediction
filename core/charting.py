@@ -28,6 +28,7 @@ THEMES = {
         "shade": "rgba(120,145,190,0.12)",
         "divider": "rgba(150,150,150,0.65)",
         "level": "rgba(150,155,165,0.45)",
+        "tag_bg": "rgba(14,17,23,0.92)",
     },
     "light": {
         "template": "plotly_white",
@@ -39,6 +40,7 @@ THEMES = {
         "shade": "rgba(70,105,175,0.09)",
         "divider": "rgba(90,95,105,0.6)",
         "level": "rgba(110,118,130,0.5)",
+        "tag_bg": "rgba(255,255,255,0.92)",
     },
 }
 
@@ -64,6 +66,7 @@ def build(
     dark: bool = True,
     crosshair: bool = False,
     unified_hover: bool = False,
+    events: pd.DataFrame | None = None,
     height_price: int = 520,
     height_panel: int = 165,
 ) -> go.Figure:
@@ -157,12 +160,24 @@ def build(
 
     _add_overlays(fig, overlays)
 
+    if events is not None and not events.empty and not predicted.empty:
+        _add_event_markers(fig, events, predicted, t)
+
+    # Tag the closing level at the right edge, matching where the panel tags
+    # sit. With a scenario present that is the scenario's end, not the last
+    # real close -- anchoring it to history would drop the label on top of
+    # the predicted candles.
+    edge_close = predicted["Close"] if not predicted.empty else history["Close"]
+    _tag_last(fig, edge_close, "#c8d0de" if dark else "#2f3945", row=1, t=t)
+
     for i, (name, series_map) in enumerate(panels, start=2):
         _add_panel(fig, name, series_map, row=i, t=t)
 
     fig.update_layout(
         height=total,
-        margin=dict(l=4, r=4, t=52, b=4),
+        # Right margin holds the price axis ticks and, beyond them, the
+        # last-value badges.
+        margin=dict(l=4, r=96, t=52, b=4),
         xaxis_rangeslider_visible=False,
         hovermode="x unified" if unified_hover else "x",
         hoverdistance=8,
@@ -211,7 +226,13 @@ def build(
         gridcolor=t["grid"],
         zeroline=False,
         tickfont=dict(color=t["muted"], size=10),
+        # Prices on the right, trading-platform style.
+        side="right",
+        # fixedrange=False is what makes the y axis draggable/scrollable on
+        # its own: drag the axis to stretch it, double-click to autoscale.
+        fixedrange=False,
     )
+    fig.update_xaxes(fixedrange=False)
     if log_scale:
         fig.update_yaxes(type="log", row=1, col=1)
 
@@ -264,6 +285,93 @@ def _add_overlays(fig: go.Figure, overlays: dict[str, pd.Series]) -> None:
             ma_i += 1
 
 
+def _tag_last(
+    fig: go.Figure, s: pd.Series, color: str, row: int, t: dict, digits: int = 2
+) -> None:
+    """Badge a series' final value on the right-hand axis.
+
+    Pinned to paper x=1 rather than to the last data point, so the badge
+    stays glued to the axis when the chart is panned or zoomed.
+    """
+    sv = s.dropna()
+    if sv.empty:
+        return
+    v = float(sv.iloc[-1])
+    # Index levels run to five figures; two decimals there is noise and makes
+    # the badge wide enough to crowd its neighbours.
+    if abs(v) >= 1000:
+        digits = 0
+    fig.add_annotation(
+        xref="paper",
+        x=1.0,
+        xanchor="left",
+        # Clear the tick labels rather than overlapping them; the right
+        # margin is sized to match.
+        xshift=36,
+        yref="y" if row == 1 else f"y{row}",
+        y=v,
+        text=f"{v:,.{digits}f}",
+        showarrow=False,
+        font=dict(size=9, color=color),
+        bgcolor=t["tag_bg"],
+        borderpad=2,
+        opacity=0.95,
+    )
+
+
+def _add_event_markers(
+    fig: go.Figure, events: pd.DataFrame, predicted: pd.DataFrame, t: dict
+) -> None:
+    """Flag bars in the scenario where indicator events fire.
+
+    Several events often land on one bar, so they are grouped per bar and
+    per direction and the hover text lists them all.
+    """
+    if "_ts" not in events.columns:
+        return
+
+    for bias, color, sym, sign in (
+        ("bullish", UP, "triangle-up", -1),
+        ("bearish", DOWN, "triangle-down", 1),
+    ):
+        sub = events[events["Bias"] == bias]
+        if sub.empty:
+            continue
+
+        xs, ys, texts = [], [], []
+        for ts, grp in sub.groupby("_ts", sort=True):
+            if ts not in predicted.index:
+                continue
+            bar = predicted.loc[ts]
+            span = float(predicted["High"].max() - predicted["Low"].min()) or 1.0
+            pad = span * 0.06
+            y = float(bar["Low"]) - pad if sign < 0 else float(bar["High"]) + pad
+            xs.append(_dt(ts))
+            ys.append(y)
+            texts.append(
+                "<br>".join(f"{r.Indicator}: {r.Event}" for r in grp.itertuples())
+            )
+
+        if not xs:
+            continue
+
+        fig.add_trace(
+            go.Scatter(
+                x=xs,
+                y=ys,
+                mode="markers",
+                name=f"{bias} signal",
+                marker=dict(symbol=sym, size=11, color=color,
+                            line=dict(width=0.5, color=t["hover_bg"])),
+                hovertemplate="%{text}<extra></extra>",
+                text=texts,
+                showlegend=False,
+            ),
+            row=1,
+            col=1,
+        )
+
+
 def _add_panel(
     fig: go.Figure,
     name: str,
@@ -272,6 +380,9 @@ def _add_panel(
     t: dict,
 ) -> None:
     colors = ["#2f7fd1", "#e0821a", "#9c37b8", "#0f9aa8"]
+    # +DI/-DI read as direction, so they get the same green/red as candles
+    # rather than an arbitrary palette slot.
+    fixed = {"+DI": UP, "-DI": DOWN, "ADX": "#b98cd8"}
     ci = 0
 
     for label, s in series_map.items():
@@ -292,19 +403,28 @@ def _add_panel(
             continue
 
         dash = "dot" if label.startswith(("Signal", "%D", "QQE trailing")) else None
+        key = next((k for k in fixed if label.startswith(k)), None)
+        if key:
+            color = fixed[key]
+            width = 1.6 if key == "ADX" else 1.3
+        else:
+            color = colors[ci % len(colors)]
+            width = 1.3
+            ci += 1
+
         fig.add_trace(
             go.Scatter(
                 x=s.index,
                 y=s,
                 mode="lines",
                 name=label,
-                line=dict(width=1.3, color=colors[ci % len(colors)], dash=dash),
+                line=dict(width=width, color=color, dash=dash),
                 hovertemplate="%{y:.2f}<extra>" + label + "</extra>",
             ),
             row=row,
             col=1,
         )
-        ci += 1
+        _tag_last(fig, s, color, row=row, t=t)
 
     # Reference levels that make each oscillator readable at a glance.
     def hline(y, color, dash="dash"):
@@ -324,5 +444,9 @@ def _add_panel(
     elif name == "QQE":
         hline(50, t["level"], "dot")
         fig.update_yaxes(range=[0, 100], dtick=25, row=row, col=1)
-    elif name == "Price Oscillator":
+    elif name in ("Price Oscillator", "MACD"):
         hline(0, t["level"], "solid")
+    elif name == "DMI / ADX":
+        # 25 is Wilder's conventional line between trending and ranging.
+        hline(25, t["level"], "dash")
+        fig.update_yaxes(rangemode="tozero", row=row, col=1)

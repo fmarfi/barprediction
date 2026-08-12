@@ -112,6 +112,30 @@ def collect(
             events += _emit(uz, window, "Price Oscillator", "crossed above zero", "bullish", po)
             events += _emit(dz, window, "Price Oscillator", "crossed below zero", "bearish", po)
 
+        elif name == "MACD":
+            keys = list(series_map)
+            line, sig = series_map[keys[0]], series_map[keys[1]]
+            up, dn = _cross_pair(line, sig)
+            events += _emit(up, window, "MACD", "crossed above signal", "bullish", line)
+            events += _emit(dn, window, "MACD", "crossed below signal", "bearish", line)
+            uz, dz = _crosses(line, 0.0)
+            events += _emit(uz, window, "MACD", "crossed above zero", "bullish", line)
+            events += _emit(dz, window, "MACD", "crossed below zero", "bearish", line)
+
+        elif name == "DMI / ADX":
+            keys = list(series_map)
+            plus, minus, adx = (series_map[k] for k in keys[:3])
+            up, dn = _cross_pair(plus, minus)
+            events += _emit(up, window, "DMI / ADX", "+DI crossed above -DI",
+                            "bullish", plus)
+            events += _emit(dn, window, "DMI / ADX", "+DI crossed below -DI",
+                            "bearish", minus)
+            u25, d25 = _crosses(adx, 25.0)
+            events += _emit(u25, window, "DMI / ADX",
+                            "ADX rose above 25 (trend strengthening)", "neutral", adx)
+            events += _emit(d25, window, "DMI / ADX",
+                            "ADX fell below 25 (trend fading)", "neutral", adx)
+
         elif name == "QQE":
             trend = series_map.get("trend")
             rsi_ma = next(iter(series_map.values()))
@@ -143,12 +167,20 @@ def collect(
                     events += _emit(dn, window, "Moving Average",
                                     f"{la} crossed below {lb}", "bearish", sa)
 
+    cols = ["_ts", "Bar", "Indicator", "Event", "Detail", "Bias"]
     if not events:
-        return pd.DataFrame(columns=["Bar", "Indicator", "Event", "Detail", "Bias"])
+        return pd.DataFrame(columns=cols)
+
+    # Include the time component only when bars are intraday, otherwise
+    # several 5-minute events would all render as the same date.
+    intraday = any(e.when.time() != pd.Timestamp(0).time() for e in events)
+    fmt = "%Y-%m-%d %H:%M" if intraday else "%Y-%m-%d"
 
     rows = [
         {
-            "Bar": e.when.strftime("%Y-%m-%d"),
+            # Kept for chart markers; the dashboard drops it before display.
+            "_ts": e.when,
+            "Bar": e.when.strftime(fmt),
             "Indicator": e.indicator,
             "Event": e.event,
             "Detail": e.detail,
@@ -156,7 +188,7 @@ def collect(
         }
         for e in sorted(events, key=lambda e: (e.when, e.indicator))
     ]
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=cols)
 
 
 def snapshot(

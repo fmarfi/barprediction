@@ -156,9 +156,18 @@ def load_csv(file, symbol: str = "CSV", interval: str = "1d") -> Series:
 
 
 def future_index(series: Series, horizon: int) -> pd.DatetimeIndex:
-    """Timestamps for the next `horizon` bars after the end of history."""
+    """Timestamps for the next `horizon` bars after the end of history.
+
+    Always returns exactly `horizon` stamps. `inclusive="right"` is not
+    enough on its own: it drops the first point only when it coincides with
+    the anchor, so a Wednesday anchor on a W-FRI frequency snaps forward to
+    Friday, nothing is dropped, and the caller silently gets an extra bar.
+    """
+    if horizon < 1:
+        return pd.DatetimeIndex([])
+
     last = series.df.index[-1]
-    idx = pd.date_range(
-        start=last, periods=horizon + 1, freq=series.future_freq, inclusive="right"
-    )
+    # Over-generate, then keep only stamps strictly after the anchor.
+    idx = pd.date_range(start=last, periods=horizon + 3, freq=series.future_freq)
+    idx = idx[idx > last][:horizon]
     return pd.DatetimeIndex(idx)
