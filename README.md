@@ -87,15 +87,20 @@ alongside the indicator events, so you can ask "does my scenario reach the
 
 ### Drawing it yourself
 
-Auto-detection is only the default. **Leg** offers three ways to set the
-anchors:
+Auto-detection is only the default. The row above the chart offers three
+ways to set the anchors:
 
 - **Auto (last impulse)** — the detected swing described above.
-- **Click two points** — click the start and end of the leg directly on the
-  chart. The sidebar counts your picks; a third click rolls the window
-  forward, keeping the latest two. **Clear picks** starts over.
-- **Pick bars** — type how many bars back each anchor sits, when you want an
-  exact position rather than a click.
+- **Choose exact points** — name the bar *and* the price for each end:
+  `Leg starts [31 Jul] at its [Low]  →  Leg ends [12 Aug] at its [High]`.
+  Defaults land on the auto-detected swing, so you nudge rather than build
+  from nothing, and the resulting leg and its size are printed underneath.
+  This is the reliable one: no browser interaction involved.
+- **Click two points** — click the anchors on the chart. **Anchor on**
+  chooses which prices are clickable: **Highs & Lows** (default), **Closes**,
+  or **Every price**. A Fibonacci leg runs extreme to extreme, so snapping
+  everything to the close would quietly measure a different swing. A third
+  click rolls the window forward, keeping the latest two; **Clear** resets.
 
 The chart modebar also carries Plotly's freehand tools — **line**, **path**,
 **rectangle** and an **eraser**. Pick a tool, drag on the chart, and draw

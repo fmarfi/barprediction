@@ -68,7 +68,7 @@ def build(
     unified_hover: bool = False,
     events: pd.DataFrame | None = None,
     overlay_shapes: dict | None = None,
-    pickable: pd.Series | None = None,
+    pickable: dict[str, pd.Series] | None = None,
     height_price: int = 520,
     height_panel: int = 165,
 ) -> go.Figure:
@@ -160,29 +160,40 @@ def build(
             col=1,
         )
 
-    if pickable is not None and not pickable.empty:
-        # Candlesticks do not report clicks usefully, so a marker per bar
-        # sits on top to catch them; Streamlit reads the selection back and
-        # turns it into Fibonacci anchors. These are deliberately visible:
-        # a fully transparent marker is neither clickable nor discoverable,
-        # so there is nothing to aim at.
-        fig.add_trace(
-            go.Scatter(
-                x=pickable.index,
-                y=pickable,
-                mode="markers",
-                name="click to anchor",
-                marker=dict(
-                    size=7,
-                    color="rgba(215,225,240,0.35)",
-                    line=dict(width=1, color="rgba(120,170,220,0.85)"),
+    if pickable:
+        # Candlesticks do not report clicks usefully, so markers sit on top
+        # to catch them; Streamlit reads the selection back and turns it
+        # into Fibonacci anchors. Deliberately visible -- a transparent
+        # marker is neither reliably clickable nor discoverable.
+        #
+        # One trace per price field, so the anchor lands on the exact value
+        # meant. A Fibonacci leg normally runs low-to-high, and snapping
+        # everything to the close would quietly measure the wrong swing.
+        for field, series in pickable.items():
+            if series is None or series.empty:
+                continue
+            style = PICK_STYLES.get(field, PICK_STYLES["Close"])
+            fig.add_trace(
+                go.Scatter(
+                    x=series.index,
+                    y=series,
+                    mode="markers",
+                    name=field,
+                    marker=dict(
+                        size=style["size"],
+                        symbol=style["symbol"],
+                        color=style["color"],
+                        line=dict(width=1, color=style["edge"]),
+                    ),
+                    hovertemplate=(
+                        "%{x|%d %b %Y}<br>" + field + " %{y:,.2f}"
+                        "<extra>click to anchor</extra>"
+                    ),
+                    showlegend=False,
                 ),
-                hovertemplate="%{x|%d %b %Y}<br>%{y:,.2f}<extra>click to anchor</extra>",
-                showlegend=False,
-            ),
-            row=1,
-            col=1,
-        )
+                row=1,
+                col=1,
+            )
 
     _add_overlays(fig, overlays)
 
@@ -365,6 +376,27 @@ FIB_COLORS = {
     "1": "#8e99ab",
 }
 FIB_PROJECTION = "#7e8aa0"
+
+# Anchor dots, shaped so the field is obvious at a glance: highs point up
+# and sit on the wick tops, lows point down.
+PICK_STYLES = {
+    "High": {
+        "symbol": "triangle-up", "size": 7,
+        "color": "rgba(38,166,154,0.55)", "edge": "rgba(90,220,205,0.95)",
+    },
+    "Low": {
+        "symbol": "triangle-down", "size": 7,
+        "color": "rgba(239,83,80,0.55)", "edge": "rgba(255,140,135,0.95)",
+    },
+    "Close": {
+        "symbol": "circle", "size": 6,
+        "color": "rgba(215,225,240,0.35)", "edge": "rgba(120,170,220,0.9)",
+    },
+    "Open": {
+        "symbol": "diamond", "size": 6,
+        "color": "rgba(200,190,240,0.35)", "edge": "rgba(170,150,230,0.9)",
+    },
+}
 
 
 def _add_trend_and_fib(fig: go.Figure, shapes: dict, t: dict) -> None:

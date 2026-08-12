@@ -542,7 +542,7 @@ if "Trend & Fibonacci" in chosen:
     lc, sc_, bc = st.columns([3, 4, 1.4], vertical_alignment="bottom")
     fib_anchor = lc.radio(
         "Fibonacci leg",
-        ["Auto (last impulse)", "Click two points", "Pick bars"],
+        ["Auto (last impulse)", "Choose exact points", "Click two points"],
         horizontal=True,
         label_visibility="collapsed",
     )
@@ -550,28 +550,71 @@ if "Trend & Fibonacci" in chosen:
         picked = st.session_state.get("_picked", [])
         if len(picked) < 2:
             sc_.info(
-                f"Click any two dots on the price chart to set the leg — "
+                f"Click two dots on the chart to set the leg — "
                 f"{len(picked)} of 2 chosen.",
                 icon="👆",
             )
         else:
+            a, b = picked
             sc_.success(
-                f"Leg anchored {picked[0][0]:%d %b} → {picked[1][0]:%d %b}. "
+                f"Leg {a[1]:,.2f} ({a[0]:%d %b}) → {b[1]:,.2f} ({b[0]:%d %b}). "
                 f"Click again to move it.",
                 icon="✅",
             )
         if bc.button("Clear", width="stretch"):
             st.session_state["_picked"] = []
             st.rerun()
-    elif fib_anchor == "Pick bars":
-        fib_from = sc_.number_input(
-            "From (bars back)", 1, 500, 60, step=1,
-            help="Counted back from the last historical bar.",
+        # Which prices are clickable. Highs and lows are the default because
+        # a Fibonacci leg is normally measured extreme to extreme; snapping
+        # to closes would measure a different swing.
+        snap = st.radio(
+            "Anchor on",
+            ["Highs & Lows", "Closes", "Every price (OHLC)"],
+            horizontal=True,
+            key="fib_snap",
+            help="Which points you can click. Highs and lows give the real "
+            "extremes of the swing.",
         )
-        fib_to = bc.number_input("To", 0, 500, 0, step=1)
+        st.session_state["_snap_fields"] = {
+            "Highs & Lows": ["High", "Low"],
+            "Closes": ["Close"],
+            "Every price (OHLC)": ["High", "Low", "Open", "Close"],
+        }[snap]
+    elif fib_anchor == "Choose exact points":
+        sc_.caption(
+            "Pick the bar and the price for each end of the leg. "
+            "Low → High measures a rally; High → Low measures a decline."
+        )
     else:
         sc_.caption("Leg detected from the latest swing. Switch to a manual "
                     "mode to place it yourself.")
+
+if "Trend & Fibonacci" in chosen and fib_anchor == "Choose exact points":
+    # Deterministic alternative to clicking: name the two bars and which
+    # price on each. Defaults land on the auto-detected swing, so this
+    # starts from a sensible leg and gets nudged rather than built blind.
+    auto = trends.last_impulse(hist, int(swing_n), int(swing_n))
+    dates = [d.strftime("%Y-%m-%d") for d in hist.index]
+
+    def _pos(ts, fallback: int) -> int:
+        try:
+            return dates.index(pd.Timestamp(ts).strftime("%Y-%m-%d"))
+        except (ValueError, TypeError):
+            return fallback
+
+    d1, f1, d2, f2 = st.columns(4)
+    a_date = d1.selectbox(
+        "Leg starts", dates,
+        index=_pos(auto.start_ts if auto else None, max(0, len(dates) - 60)),
+    )
+    a_field = f1.selectbox("at its", ["Low", "High", "Close", "Open"], index=0)
+    b_date = d2.selectbox(
+        "Leg ends", dates,
+        index=_pos(auto.end_ts if auto else None, len(dates) - 1),
+    )
+    b_field = f2.selectbox(
+        "at its", ["High", "Low", "Close", "Open"], index=0, key="b_field"
+    )
 
 full = pd.concat([hist, pred])
 overlays: dict[str, pd.Series] = {}
@@ -666,18 +709,31 @@ if "Trend & Fibonacci" in chosen:
             else None
         )
     else:
-        imp = trends.manual_impulse(
-            hist, len(hist) - 1 - int(fib_from), len(hist) - 1 - int(fib_to)
+        ts_a, ts_b = pd.Timestamp(a_date), pd.Timestamp(b_date)
+        imp = (
+            trends.Impulse(
+                ts_a, float(hist.loc[ts_a, a_field]),
+                ts_b, float(hist.loc[ts_b, b_field]),
+            )
+            if ts_a != ts_b
+            else None
         )
 
     if imp is None:
-        st.info(
-            "Click two points on the chart to anchor the leg."
-            if fib_anchor == "Click two points"
-            else "No swing found at this sensitivity — lower it, or pick the "
-            "leg by hand in the sidebar."
-        )
+        if fib_anchor == "Choose exact points":
+            st.warning("The leg needs two different bars.")
+        elif fib_anchor == "Auto (last impulse)":
+            st.info(
+                "No swing found at this sensitivity — lower it, or place the "
+                "leg yourself with **Choose exact points**."
+            )
     else:
+        if fib_anchor == "Choose exact points":
+            st.caption(
+                f"Leg: {imp.start_price:,.2f} ({a_field}, {imp.start_ts:%d %b}) → "
+                f"{imp.end_price:,.2f} ({b_field}, {imp.end_ts:%d %b})  ·  "
+                f"{imp.pct:+.2f}%"
+            )
         fib_levels = trends.fib_levels(
             imp,
             retracements=tuple(float(r) for r in fib_ratios),
@@ -746,7 +802,10 @@ fig = charting.build(
     events=events,
     overlay_shapes=shapes_v,
     pickable=(
-        view_hist["Close"]
+        {
+            f: view_hist[f]
+            for f in st.session_state.get("_snap_fields", ["High", "Low"])
+        }
         if "Trend & Fibonacci" in chosen and fib_anchor == "Click two points"
         else None
     ),
