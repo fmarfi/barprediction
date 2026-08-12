@@ -320,29 +320,6 @@ with st.sidebar:
             help="Bars either side a pivot must beat. Higher finds fewer, "
             "bigger swings.",
         )
-        fib_anchor = st.radio(
-            "Leg",
-            ["Auto (last impulse)", "Click two points", "Pick bars"],
-            help="Click two points: pick the start and end of the leg "
-            "directly on the chart.",
-        )
-        if fib_anchor == "Click two points":
-            picked = st.session_state.get("_picked", [])
-            st.caption(
-                f"{len(picked)} of 2 points chosen — click the chart."
-                if len(picked) < 2
-                else f"Anchored {picked[0][0]:%d %b} → {picked[1][0]:%d %b}."
-            )
-            if st.button("Clear picks", width="stretch"):
-                st.session_state["_picked"] = []
-                st.rerun()
-        fib_from = fib_to = 0
-        if fib_anchor == "Pick bars":
-            fib_from = st.number_input(
-                "From (bars back)", 1, 500, 60, step=1,
-                help="Counted back from the last historical bar.",
-            )
-            fib_to = st.number_input("To (bars back)", 0, 500, 0, step=1)
         fib_ratios = st.multiselect(
             "Retracements",
             [f"{r:g}" for r in trends.RETRACEMENTS],
@@ -556,6 +533,45 @@ chosen = st.pills(
     key="chosen",
 )
 chosen = chosen or []
+
+# Fibonacci leg controls sit here, beside the chart they act on, rather than
+# inside a collapsed sidebar expander where nobody finds them.
+fib_anchor = "Auto (last impulse)"
+fib_from = fib_to = 0
+if "Trend & Fibonacci" in chosen:
+    lc, sc_, bc = st.columns([3, 4, 1.4], vertical_alignment="bottom")
+    fib_anchor = lc.radio(
+        "Fibonacci leg",
+        ["Auto (last impulse)", "Click two points", "Pick bars"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    if fib_anchor == "Click two points":
+        picked = st.session_state.get("_picked", [])
+        if len(picked) < 2:
+            sc_.info(
+                f"Click any two dots on the price chart to set the leg — "
+                f"{len(picked)} of 2 chosen.",
+                icon="👆",
+            )
+        else:
+            sc_.success(
+                f"Leg anchored {picked[0][0]:%d %b} → {picked[1][0]:%d %b}. "
+                f"Click again to move it.",
+                icon="✅",
+            )
+        if bc.button("Clear", width="stretch"):
+            st.session_state["_picked"] = []
+            st.rerun()
+    elif fib_anchor == "Pick bars":
+        fib_from = sc_.number_input(
+            "From (bars back)", 1, 500, 60, step=1,
+            help="Counted back from the last historical bar.",
+        )
+        fib_to = bc.number_input("To", 0, 500, 0, step=1)
+    else:
+        sc_.caption("Leg detected from the latest swing. Switch to a manual "
+                    "mode to place it yourself.")
 
 full = pd.concat([hist, pred])
 overlays: dict[str, pd.Series] = {}

@@ -161,17 +161,23 @@ def build(
         )
 
     if pickable is not None and not pickable.empty:
-        # Candlesticks do not report clicks usefully, so an invisible marker
-        # per bar sits on top to catch them. Streamlit reads the selection
-        # back and turns it into Fibonacci anchors.
+        # Candlesticks do not report clicks usefully, so a marker per bar
+        # sits on top to catch them; Streamlit reads the selection back and
+        # turns it into Fibonacci anchors. These are deliberately visible:
+        # a fully transparent marker is neither clickable nor discoverable,
+        # so there is nothing to aim at.
         fig.add_trace(
             go.Scatter(
                 x=pickable.index,
                 y=pickable,
                 mode="markers",
-                name="pick",
-                marker=dict(size=14, opacity=0, color="#ffffff"),
-                hovertemplate="%{x|%Y-%m-%d}<br>%{y:.2f}<extra>click to anchor</extra>",
+                name="click to anchor",
+                marker=dict(
+                    size=7,
+                    color="rgba(215,225,240,0.35)",
+                    line=dict(width=1, color="rgba(120,170,220,0.85)"),
+                ),
+                hovertemplate="%{x|%d %b %Y}<br>%{y:,.2f}<extra>click to anchor</extra>",
                 showlegend=False,
             ),
             row=1,
