@@ -122,9 +122,22 @@ Run the checks with `python tests/test_indicators.py`.
 
 ## Saving scenarios and switching timeframes
 
-**Save** names the bars currently in the table and writes them to
-`scenarios/<name>.json` along with the symbol and the interval they were
-drawn at. **Load** brings them back; **Delete** removes the file.
+Under the bars table, **Save / load this scenario**:
+
+- **⬇ Download bars (.json)** puts the file on *your* device. This is the
+  route that works on a hosted deployment — nothing is stored on the server,
+  so your scenarios are private to you and survive every redeploy. Restore
+  with the uploader beside it, on any machine and at any timeframe.
+- **💾 Save to this machine** writes `scenarios/<name>.json`, with a Load and
+  Delete list beside it. Convenient when you run the app locally.
+
+> The local-file section is **hidden on a hosted deployment**. There the
+> server's disk is one folder shared by every visitor — anyone could load or
+> delete anyone else's scenarios — and it is wiped on redeploy. `is_ephemeral()`
+> detects this (the repo mounts under `/mount/src` on Streamlit Cloud);
+> override with `BARPREDICTION_FORCE_LOCAL=1`.
+
+Both routes write the same JSON, so a file saved one way loads the other.
 
 Because the interval is stored, a scenario drawn on one timeframe can be
 loaded onto another. Draw three weekly bars, switch the chart to `1d`, load
@@ -147,10 +160,6 @@ is ordinary OHLC aggregation, and a short final group still becomes a bar.
 Ratios are in trading bars, not calendar time: a week is 5 sessions, a month
 21. Intraday↔daily conversion is **refused** rather than guessed, because the
 ratio depends on session length.
-
-> On Streamlit Community Cloud the filesystem is ephemeral — saved scenarios
-> survive a page reload but not a reboot or redeploy. Locally they persist.
-> `scenarios/` is gitignored, so your scenarios stay yours.
 
 ## Reading the chart
 

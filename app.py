@@ -7,6 +7,8 @@ does to them.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -95,9 +97,9 @@ with st.sidebar:
     # A queued load has to be resolved here, before the horizon slider is
     # created: Streamlit refuses to let a widget's state be written once the
     # widget exists, and loading a scenario changes the bar count.
-    if st.session_state.get("_pending_load"):
+    if st.session_state.get("_pending_scenario") is not None:
         try:
-            sc = store.load(st.session_state.pop("_pending_load"))
+            sc = st.session_state.pop("_pending_scenario")
             conv = resample.convert(sc.bars, sc.interval, interval)
             st.session_state["_loaded_bars"] = conv
             st.session_state["horizon"] = int(min(max(len(conv), 1), 60))
@@ -111,6 +113,7 @@ with st.sidebar:
             )
         except Exception as e:  # noqa: BLE001
             st.session_state["_load_error"] = str(e)
+            st.session_state.pop("_pending_scenario", None)
 
     st.divider()
     st.subheader("Bars to predict")
@@ -142,36 +145,6 @@ with st.sidebar:
             )
 
     regen = st.button("Reseed bars", width="stretch", type="secondary")
-
-    st.divider()
-    st.subheader("Saved scenarios")
-
-    saved = store.list_all()
-    if saved:
-        pick = st.selectbox(
-            "Load a scenario",
-            ["—"] + [sc.label for sc in saved],
-            help="Scenarios saved at another interval are converted to the "
-            "current one on load.",
-        )
-        chosen_sc = next((sc for sc in saved if sc.label == pick), None)
-        if chosen_sc is not None:
-            if chosen_sc.interval != interval:
-                st.caption(
-                    resample.describe(chosen_sc.bars, chosen_sc.interval, interval)
-                )
-            lc, dc = st.columns(2)
-            if lc.button("Load", width="stretch", type="primary"):
-                st.session_state["_pending_load"] = chosen_sc.name
-                st.rerun()
-            if dc.button("Delete", width="stretch"):
-                store.delete(chosen_sc.name)
-                st.rerun()
-    else:
-        st.caption("None saved yet.")
-
-    save_name = st.text_input("Save current bars as", "", placeholder="e.g. breakout")
-    do_save = st.button("Save", width="stretch", disabled=not save_name.strip())
 
     st.divider()
     st.subheader("Indicator settings")
@@ -313,13 +286,6 @@ if note := st.session_state.pop("_load_note", None):
     st.success(note, icon="✅")
 if err := st.session_state.pop("_load_error", None):
     st.error(f"Could not load scenario: {err}")
-
-if do_save:
-    try:
-        p = store.save(save_name, symbol, interval, pred)
-        st.success(f"Saved “{save_name}” → {p.name}", icon="💾")
-    except Exception as e:  # noqa: BLE001
-        st.error(f"Could not save: {e}")
 
 # ------------------------------------------------------------ header strip
 
@@ -480,6 +446,81 @@ with edit_col:
     if not clean.equals(st.session_state["bars"]):
         st.session_state["bars"] = clean
         st.rerun()
+    pred = clean
+
+    with st.expander("Save / load this scenario"):
+        scen_name = st.text_input(
+            "Scenario name", "", placeholder="e.g. breakout", key="scen_name"
+        )
+        label = scen_name.strip() or f"{symbol}-{interval}"
+
+        # Download puts the file on whoever's device is using the app, so it
+        # is private to them and survives redeploys. This is the route that
+        # works on a hosted deployment.
+        st.download_button(
+            "⬇ Download bars (.json)",
+            data=store.to_json_bytes(label, symbol, interval, pred),
+            file_name=store.filename_for(label, symbol, interval),
+            mime="application/json",
+            width="stretch",
+            help="Saves to your device. Re-upload it below to restore, on "
+            "any machine and at any timeframe.",
+        )
+
+        up = st.file_uploader(
+            "⬆ Restore from a downloaded file", type=["json"], key="scen_upload"
+        )
+        if up is not None:
+            # The uploader keeps returning the same file on every rerun;
+            # only act when a genuinely different one arrives.
+            stamp = (up.name, up.size)
+            if st.session_state.get("_last_upload") != stamp:
+                st.session_state["_last_upload"] = stamp
+                try:
+                    sc = store.from_json_bytes(up.getvalue(), Path(up.name).stem)
+                    st.session_state["_pending_scenario"] = sc
+                    st.rerun()
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"Could not read that file: {e}")
+
+        if store.is_ephemeral():
+            st.caption(
+                "Server-side saving is off on the hosted app: its disk is "
+                "shared between all visitors and wiped on redeploy. Use "
+                "download/upload instead."
+            )
+        else:
+            st.divider()
+            st.caption("Or keep it on this machine, in `scenarios/`.")
+            if st.button(
+                "💾 Save to this machine",
+                width="stretch",
+                disabled=not scen_name.strip(),
+            ):
+                try:
+                    p = store.save(scen_name, symbol, interval, pred)
+                    st.success(f"Saved → {p.name}")
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"Could not save: {e}")
+
+            saved = store.list_all()
+            if saved:
+                pick = st.selectbox(
+                    "Load from this machine", ["—"] + [sc.label for sc in saved]
+                )
+                hit = next((sc for sc in saved if sc.label == pick), None)
+                if hit is not None:
+                    if hit.interval != interval:
+                        st.caption(
+                            resample.describe(hit.bars, hit.interval, interval)
+                        )
+                    lc, dc = st.columns(2)
+                    if lc.button("Load", width="stretch", type="primary"):
+                        st.session_state["_pending_scenario"] = hit
+                        st.rerun()
+                    if dc.button("Delete", width="stretch"):
+                        store.delete(hit.name)
+                        st.rerun()
 
 with sig_col:
     st.markdown("#### Triggered signals")
