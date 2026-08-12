@@ -336,6 +336,13 @@ def build(
     # the entire chart. Anchors are drawn explicitly, so plotly's own
     # selection styling is never wanted here.
     fig.update_traces(selectedpoints=None)
+
+    # Lock everything drawn from data: RSI's 50 line, the Fibonacci levels,
+    # the scenario shading. Shape dragging stays on in the config so
+    # freehand annotations can still be moved, but a reference level is not
+    # something to nudge by accident -- and a dragged one would silently
+    # disagree with the value it is named after.
+    fig.update_shapes(editable=False)
     return fig
 
 
@@ -461,6 +468,21 @@ def _add_trend_and_fib(fig: go.Figure, shapes: dict, t: dict) -> None:
         )
 
     if imp is not None:
+        # The box around the leg -- the shape a Fibonacci tool is normally
+        # dragged out as, so what the levels measure is unmistakable.
+        fig.add_shape(
+            type="rect",
+            x0=_dt(imp.start_ts),
+            x1=_dt(imp.end_ts),
+            y0=min(imp.start_price, imp.end_price),
+            y1=max(imp.start_price, imp.end_price),
+            line=dict(color="rgba(150,170,200,0.55)", width=1, dash="dot"),
+            fillcolor="rgba(150,170,200,0.06)",
+            layer="below",
+            row=1,
+            col=1,
+        )
+
         # The leg itself, so it is obvious what the levels are measured from.
         fig.add_trace(
             go.Scatter(

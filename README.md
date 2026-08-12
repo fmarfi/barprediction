@@ -96,18 +96,20 @@ ways to set the anchors:
   Defaults land on the auto-detected swing, so you nudge rather than build
   from nothing, and the resulting leg and its size are printed underneath.
   This is the reliable one: no browser interaction involved.
-- **Click two points** — click the anchors on the chart, or drag a box
-  across the swing to take both ends in one gesture. **Anchor on** chooses
-  which prices are clickable: **Highs & Lows** (default), **Closes**, or
-  **Every price**. A Fibonacci leg runs extreme to extreme, so snapping
-  everything to the close would quietly measure a different swing. A third
-  click rolls the window forward, keeping the latest two; **Clear** resets.
+- **Drag a box** — the usual way to place a Fibonacci tool. Drag a
+  rectangle from one end of the swing to the other; its height is the leg.
+  The box is drawn on the chart so what the levels measure is
+  unmistakable, and **Clear** resets it.
+
+  A rectangle carries no direction of its own, so the direction is read
+  from the price action inside it: a rally is measured low-to-high, a
+  decline high-to-low. Unlike clicking a bar, the box's edges are free
+  prices — you are not restricted to a high or a close.
 
   Selecting this mode switches the chart's drag mode from **pan** to
   **select**, because a pan drag swallows the gesture and Streamlit never
-  receives a selection — clicks appear to do nothing. Scroll still zooms,
-  and the modebar's pan button is still there if you need to move around
-  mid-pick.
+  receives a selection. Scroll still zooms, and the modebar's pan button is
+  still there if you need to move around mid-drag.
 
 The chart modebar also carries Plotly's freehand tools — **line**, **path**,
 **rectangle** and an **eraser**. Pick a tool, drag on the chart, and draw
@@ -295,6 +297,11 @@ point. Add and remove rows there too.
 > That is a quick visual nudge only — Plotly does not report the new
 > position back to the app, so it resets on the next redraw. Set the Nudge
 > columns to make a position permanent.
+>
+> Reference lines are **locked**: RSI's 50, Stochastic's 20/80, DMI's 25,
+> the Fibonacci levels and the scenario shading cannot be dragged. A
+> reference level nudged off its own value would quietly lie about what it
+> marks. Only shapes you draw yourself can be moved.
 
 Notes are saved and loaded with the scenario, offsets included, so a
 downloaded file carries your annotations exactly as you placed them. All three show the same bars — OHLC draws open and

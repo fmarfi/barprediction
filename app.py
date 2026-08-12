@@ -560,45 +560,29 @@ if "Trend & Fibonacci" in chosen:
     lc, sc_, bc = st.columns([3, 4, 1.4], vertical_alignment="bottom")
     fib_anchor = lc.radio(
         "Fibonacci leg",
-        ["Auto (last impulse)", "Choose exact points", "Click two points"],
+        ["Auto (last impulse)", "Choose exact points", "Drag a box"],
         horizontal=True,
         label_visibility="collapsed",
     )
-    if fib_anchor == "Click two points":
+    if fib_anchor == "Drag a box":
         picking = True
-        picked = st.session_state.get("_picked", [])
-        if len(picked) < 2:
+        box = st.session_state.get("_fib_box")
+        if box is None:
             sc_.info(
-                f"Click two triangles on the chart, or drag a box across the "
-                f"swing — {len(picked)} of 2 chosen.",
-                icon="👆",
+                "Drag a box on the chart from one end of the swing to the "
+                "other — the box's height is the leg.",
+                icon="🔲",
             )
         else:
-            a, b = picked
             sc_.success(
-                f"Leg {a[1]:,.2f} ({a[0]:%d %b}) → {b[1]:,.2f} ({b[0]:%d %b}). "
-                f"Click again to move it.",
+                f"Leg {box['start_price']:,.2f} ({pd.Timestamp(box['start_ts']):%d %b})"
+                f" → {box['end_price']:,.2f} ({pd.Timestamp(box['end_ts']):%d %b}). "
+                f"Drag again to redraw.",
                 icon="✅",
             )
         if bc.button("Clear", width="stretch"):
-            st.session_state["_picked"] = []
+            st.session_state.pop("_fib_box", None)
             st.rerun()
-        # Which prices are clickable. Highs and lows are the default because
-        # a Fibonacci leg is normally measured extreme to extreme; snapping
-        # to closes would measure a different swing.
-        snap = st.radio(
-            "Anchor on",
-            ["Highs & Lows", "Closes", "Every price (OHLC)"],
-            horizontal=True,
-            key="fib_snap",
-            help="Which points you can click. Highs and lows give the real "
-            "extremes of the swing.",
-        )
-        st.session_state["_snap_fields"] = {
-            "Highs & Lows": ["High", "Low"],
-            "Closes": ["Close"],
-            "Every price (OHLC)": ["High", "Low", "Open", "Close"],
-        }[snap]
     elif fib_anchor == "Choose exact points":
         sc_.caption(
             "Pick the bar and the price for each end of the leg. "
@@ -697,44 +681,54 @@ overlay_shapes: dict = {}
 if "Trend & Fibonacci" in chosen:
     # Clicks arrive from the previous run's chart, so they are read from
     # session state before this run's figure is built.
-    if fib_anchor == "Click two points":
-        before = list(st.session_state.get("_picked", []))
+    if fib_anchor == "Drag a box":
+        before = st.session_state.get("_fib_box")
         sel = (st.session_state.get("chart") or {}).get("selection") or {}
-
-        incoming: list[tuple[pd.Timestamp, float]] = []
-        for p in sel.get("points", []):
+        boxes = sel.get("box") or []
+        if boxes:
             try:
-                incoming.append((pd.Timestamp(p["x"]), float(p["y"])))
-            except Exception:  # noqa: BLE001
-                continue
+                b = boxes[0]
+                xs = sorted(pd.Timestamp(v) for v in b["x"])
+                ys = sorted(float(v) for v in b["y"])
+                x0, x1 = xs[0], xs[-1]
+                lo, hi = ys[0], ys[-1]
 
-        if len(incoming) >= 2:
-            # A box drag caught a range: take its extremes in time, so
-            # dragging across a swing anchors the whole leg in one gesture.
-            incoming.sort()
-            st.session_state["_picked"] = [incoming[0], incoming[-1]]
-        elif incoming:
-            ts, price = incoming[0]
-            picks = st.session_state.setdefault("_picked", [])
-            if not any(t == ts for t, _ in picks):
-                # Keep the two most recent, oldest-first along the x-axis.
-                picks.append((ts, price))
-                st.session_state["_picked"] = sorted(picks[-2:])
-        # The sidebar has already drawn by the time clicks are read, so its
-        # "n of 2 chosen" line would lag a run behind without this. Guarded
-        # on an actual change, so it cannot loop.
-        if st.session_state.get("_picked", []) != before:
+                # A rectangle has no direction of its own. Read it from the
+                # price action inside: a rally is measured low-to-high, a
+                # decline high-to-low, which is how the tool is drawn.
+                inside = hist.loc[(hist.index >= x0) & (hist.index <= x1)]
+                rising = (
+                    float(inside["Close"].iloc[-1]) >= float(inside["Close"].iloc[0])
+                    if len(inside) > 1
+                    else True
+                )
+                st.session_state["_fib_box"] = {
+                    "start_ts": str(x0),
+                    "end_ts": str(x1),
+                    "start_price": lo if rising else hi,
+                    "end_price": hi if rising else lo,
+                    "lo": lo,
+                    "hi": hi,
+                }
+            except Exception:  # noqa: BLE001 - ignore an unreadable drag
+                pass
+        # The control row has already drawn by the time the drag is read, so
+        # its status line would lag a run behind. Guarded on a real change.
+        if st.session_state.get("_fib_box") != before:
             st.rerun()
 
     # Detected on history alone: the levels are a reference your scenario is
     # measured against, so they must not move as you redraw the bars.
     if fib_anchor == "Auto (last impulse)":
         imp = trends.last_impulse(hist, int(swing_n), int(swing_n))
-    elif fib_anchor == "Click two points":
-        picks = st.session_state.get("_picked", [])
+    elif fib_anchor == "Drag a box":
+        box = st.session_state.get("_fib_box")
         imp = (
-            trends.Impulse(picks[0][0], picks[0][1], picks[1][0], picks[1][1])
-            if len(picks) == 2
+            trends.Impulse(
+                pd.Timestamp(box["start_ts"]), float(box["start_price"]),
+                pd.Timestamp(box["end_ts"]), float(box["end_price"]),
+            )
+            if box
             else None
         )
     else:
@@ -751,6 +745,8 @@ if "Trend & Fibonacci" in chosen:
     if imp is None:
         if fib_anchor == "Choose exact points":
             st.warning("The leg needs two different bars.")
+        elif fib_anchor == "Drag a box":
+            pass  # the control row already says what to do
         elif fib_anchor == "Auto (last impulse)":
             st.info(
                 "No swing found at this sensitivity — lower it, or place the "
@@ -847,7 +843,7 @@ st.plotly_chart(
     width="stretch",
     key="chart",
     on_select="rerun",
-    selection_mode="points",
+    selection_mode=["points", "box"],
     config={
         "scrollZoom": True,
         "displaylogo": False,
