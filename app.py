@@ -7,6 +7,7 @@ does to them.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -69,6 +70,37 @@ st.markdown(
 @st.cache_data(ttl=900, show_spinner=False)
 def _load(symbol: str, period: str, interval: str) -> pd.DataFrame:
     return data.load(symbol, period, interval).df
+
+
+def _viewer_is_local() -> bool:
+    """Is the person looking at this page sitting at the machine serving it?
+
+    Files under `scenarios/` live on the server. Streamlit prints a Network
+    URL by default, so without this check anyone on the LAN would get a
+    Load/Delete list for someone else's scenarios.
+
+    Two signals, either of which is sufficient: the server bound to loopback
+    so nobody else can reach it at all, or this particular client connected
+    from loopback.
+    """
+    if os.environ.get("BARPREDICTION_NO_LOCAL_FILES") == "1":
+        return False
+
+    try:
+        bound = st.get_option("server.address")
+    except Exception:  # noqa: BLE001
+        bound = None
+    if store.ip_is_local(bound):
+        return True
+
+    try:
+        return store.ip_is_local(st.context.ip_address)
+    except Exception:  # noqa: BLE001 - no context in bare/test runs
+        return False
+
+
+def _show_local_files() -> bool:
+    return not store.is_ephemeral() and _viewer_is_local()
 
 
 # ---------------------------------------------------------------- sidebar
@@ -562,27 +594,39 @@ with edit_col:
         st.rerun()
     pred = clean
 
-    with st.expander("Save / load this scenario"):
-        scen_name = st.text_input(
-            "Scenario name", "", placeholder="e.g. breakout", key="scen_name"
-        )
-        label = scen_name.strip() or f"{symbol}-{interval}"
+    # Two buttons, always visible. The file goes to whoever's device is
+    # using the app, so it is theirs and survives any redeploy.
+    scen_name = st.session_state.get("scen_name", "").strip()
+    label = scen_name or f"{symbol}-{interval}"
 
-        # Download puts the file on whoever's device is using the app, so it
-        # is private to them and survives redeploys. This is the route that
-        # works on a hosted deployment.
-        st.download_button(
-            "⬇ Download bars (.json)",
-            data=store.to_json_bytes(label, symbol, interval, pred),
-            file_name=store.filename_for(label, symbol, interval),
-            mime="application/json",
-            width="stretch",
-            help="Saves to your device. Re-upload it below to restore, on "
-            "any machine and at any timeframe.",
-        )
+    save_col, open_col = st.columns(2)
+    save_col.download_button(
+        "💾  Save bars",
+        data=store.to_json_bytes(label, symbol, interval, pred),
+        file_name=store.filename_for(label, symbol, interval),
+        mime="application/json",
+        width="stretch",
+        type="primary",
+        help=f"Downloads “{store.filename_for(label, symbol, interval)}” to "
+        f"your device. Open it again any time, on any computer.",
+    )
+    open_it = open_col.button(
+        "📂  Open bars",
+        width="stretch",
+        help="Load a file you saved earlier. It is converted to whatever "
+        "interval you are looking at.",
+    )
+    if open_it:
+        st.session_state["_show_opener"] = True
 
+    st.text_input(
+        "Name it (optional)", "", placeholder=label, key="scen_name",
+        label_visibility="collapsed",
+    )
+
+    if st.session_state.get("_show_opener"):
         up = st.file_uploader(
-            "⬆ Restore from a downloaded file", type=["json"], key="scen_upload"
+            "Choose a saved .json file", type=["json"], key="scen_upload"
         )
         if up is not None:
             # The uploader keeps returning the same file on every rerun;
@@ -593,23 +637,18 @@ with edit_col:
                 try:
                     sc = store.from_json_bytes(up.getvalue(), Path(up.name).stem)
                     st.session_state["_pending_scenario"] = sc
+                    st.session_state["_show_opener"] = False
                     st.rerun()
                 except Exception as e:  # noqa: BLE001
                     st.error(f"Could not read that file: {e}")
 
-        if store.is_ephemeral():
-            st.caption(
-                "Server-side saving is off on the hosted app: its disk is "
-                "shared between all visitors and wiped on redeploy. Use "
-                "download/upload instead."
-            )
-        else:
-            st.divider()
-            st.caption("Or keep it on this machine, in `scenarios/`.")
+    # Server-side files are only offered to someone sitting at the machine
+    # running the app -- see _viewer_is_local.
+    if _show_local_files():
+        with st.expander("Keep a copy on this computer"):
+            st.caption(f"Stored in `{store.DIR.name}/` next to the app.")
             if st.button(
-                "💾 Save to this machine",
-                width="stretch",
-                disabled=not scen_name.strip(),
+                "Save here", width="stretch", disabled=not scen_name
             ):
                 try:
                     p = store.save(scen_name, symbol, interval, pred)
@@ -619,17 +658,15 @@ with edit_col:
 
             saved = store.list_all()
             if saved:
-                pick = st.selectbox(
-                    "Load from this machine", ["—"] + [sc.label for sc in saved]
-                )
-                hit = next((sc for sc in saved if sc.label == pick), None)
+                pick = st.selectbox("Saved here", ["—"] + [s.label for s in saved])
+                hit = next((s for s in saved if s.label == pick), None)
                 if hit is not None:
                     if hit.interval != interval:
                         st.caption(
                             resample.describe(hit.bars, hit.interval, interval)
                         )
                     lc, dc = st.columns(2)
-                    if lc.button("Load", width="stretch", type="primary"):
+                    if lc.button("Open", width="stretch", type="primary"):
                         st.session_state["_pending_scenario"] = hit
                         st.rerun()
                     if dc.button("Delete", width="stretch"):

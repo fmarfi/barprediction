@@ -50,6 +50,24 @@ class Scenario:
 # --------------------------------------------------------------------------
 
 
+LOOPBACK = frozenset(
+    {"127.0.0.1", "::1", "localhost", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1"}
+)
+
+
+def ip_is_local(ip: object) -> bool:
+    """Is this client address the machine serving the page?
+
+    Fails closed. Anything that is not a recognised loopback string -- a LAN
+    address, None, or some object a test harness substituted -- counts as
+    remote, because the cost of guessing wrong is exposing one person's
+    saved scenarios to another.
+    """
+    if not isinstance(ip, str):
+        return False
+    return ip.strip().lower() in LOOPBACK
+
+
 def is_ephemeral() -> bool:
     """True when server-side files are shared between users or won't survive.
 

@@ -122,20 +122,30 @@ Run the checks with `python tests/test_indicators.py`.
 
 ## Saving scenarios and switching timeframes
 
-Under the bars table, **Save / load this scenario**:
+Two buttons under the bars table:
 
-- **⬇ Download bars (.json)** puts the file on *your* device. This is the
-  route that works on a hosted deployment — nothing is stored on the server,
-  so your scenarios are private to you and survive every redeploy. Restore
-  with the uploader beside it, on any machine and at any timeframe.
-- **💾 Save to this machine** writes `scenarios/<name>.json`, with a Load and
-  Delete list beside it. Convenient when you run the app locally.
+- **💾 Save bars** downloads a `.json` to your device.
+- **📂 Open bars** loads one back, converted to whatever interval you are
+  currently looking at.
 
-> The local-file section is **hidden on a hosted deployment**. There the
-> server's disk is one folder shared by every visitor — anyone could load or
-> delete anyone else's scenarios — and it is wiped on redeploy. `is_ephemeral()`
-> detects this (the repo mounts under `/mount/src` on Streamlit Cloud);
-> override with `BARPREDICTION_FORCE_LOCAL=1`.
+That is the whole workflow. The file is yours: it never touches the server,
+so it is private to you, works on any computer, and survives every redeploy.
+Name it first if you want something friendlier than `XU100.IS-1d.json`.
+
+**Keep a copy on this computer** appears only when you are sitting at the
+machine running the app. It writes `scenarios/<name>.json` with an Open and
+Delete list — handy for local use, and gated because those files live on the
+*server*, not on the viewer's device. Two things have to hold:
+
+- `is_ephemeral()` — false. Streamlit Cloud mounts the repo under
+  `/mount/src`, where the folder is shared by every visitor and wiped on
+  redeploy. Override with `BARPREDICTION_FORCE_LOCAL=1`.
+- The viewer is on loopback. Streamlit serves a Network URL by default, so
+  without this anyone on your LAN would get a Load/Delete list for *your*
+  scenarios. Satisfied if the server is bound to loopback
+  (`--server.address 127.0.0.1`) or the client connected from it.
+  `ip_is_local()` fails closed: anything not recognisably loopback counts as
+  remote. Force it off entirely with `BARPREDICTION_NO_LOCAL_FILES=1`.
 
 Both routes write the same JSON, so a file saved one way loads the other.
 

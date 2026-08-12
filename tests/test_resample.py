@@ -360,6 +360,27 @@ def test_filename_is_filesystem_safe():
     assert name.endswith(".json")
 
 
+def test_ip_is_local_accepts_loopback():
+    for ip in ("127.0.0.1", "::1", "localhost", "LOCALHOST", " 127.0.0.1 ",
+               "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1"):
+        assert store.ip_is_local(ip), ip
+
+
+def test_ip_is_local_fails_closed():
+    """Anything not clearly loopback must count as remote.
+
+    Guessing wrong here shows one person's saved scenarios to another, so
+    LAN addresses, None, and stand-in objects from test harnesses are all
+    treated as remote.
+    """
+    class Mock:
+        pass
+
+    for ip in ("10.30.4.53", "192.168.1.7", "212.174.147.219", "0.0.0.0",
+               "", None, 127, Mock(), b"127.0.0.1"):
+        assert not store.ip_is_local(ip), repr(ip)
+
+
 def test_store_rejects_blank_name_and_empty_bars():
     for name, bars, why in (
         ("", UP, "blank name"),
