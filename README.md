@@ -85,8 +85,28 @@ against. Crossings inside your scenario show up in **Triggered signals**
 alongside the indicator events, so you can ask "does my scenario reach the
 1.618 projection?" and get an answer.
 
-Pick the leg by hand with **Leg → Pick bars** when the automatic choice is
-not the swing you had in mind.
+### Drawing it yourself
+
+Auto-detection is only the default. **Leg** offers three ways to set the
+anchors:
+
+- **Auto (last impulse)** — the detected swing described above.
+- **Click two points** — click the start and end of the leg directly on the
+  chart. The sidebar counts your picks; a third click rolls the window
+  forward, keeping the latest two. **Clear picks** starts over.
+- **Pick bars** — type how many bars back each anchor sits, when you want an
+  exact position rather than a click.
+
+The chart modebar also carries Plotly's freehand tools — **line**, **path**,
+**rectangle** and an **eraser**. Pick a tool, drag on the chart, and draw
+whatever you like: your own trendlines, channels, boxes around a range.
+
+> Freehand shapes are annotations you draw, not inputs: nothing reads their
+> coordinates back, so they do not move the Fibonacci levels or appear in
+> the signals table. Use **Click two points** for anchors that actually
+> drive a calculation. Whether a freehand shape survives a rerun depends on
+> Plotly reusing the figure via `uirevision` — verify it in your browser
+> before relying on one.
 
 ### Are they correct?
 

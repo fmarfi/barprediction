@@ -321,8 +321,21 @@ with st.sidebar:
             "bigger swings.",
         )
         fib_anchor = st.radio(
-            "Leg", ["Auto (last impulse)", "Pick bars"], horizontal=True
+            "Leg",
+            ["Auto (last impulse)", "Click two points", "Pick bars"],
+            help="Click two points: pick the start and end of the leg "
+            "directly on the chart.",
         )
+        if fib_anchor == "Click two points":
+            picked = st.session_state.get("_picked", [])
+            st.caption(
+                f"{len(picked)} of 2 points chosen — click the chart."
+                if len(picked) < 2
+                else f"Anchored {picked[0][0]:%d %b} → {picked[1][0]:%d %b}."
+            )
+            if st.button("Clear picks", width="stretch"):
+                st.session_state["_picked"] = []
+                st.rerun()
         fib_from = fib_to = 0
         if fib_anchor == "Pick bars":
             fib_from = st.number_input(
@@ -604,18 +617,48 @@ fib_levels: dict[str, float] = {}
 overlay_shapes: dict = {}
 
 if "Trend & Fibonacci" in chosen:
+    # Clicks arrive from the previous run's chart, so they are read from
+    # session state before this run's figure is built.
+    if fib_anchor == "Click two points":
+        before = list(st.session_state.get("_picked", []))
+        sel = (st.session_state.get("chart") or {}).get("selection") or {}
+        for p in sel.get("points", []):
+            try:
+                ts = pd.Timestamp(p["x"])
+            except Exception:  # noqa: BLE001
+                continue
+            picks = st.session_state.setdefault("_picked", [])
+            if not any(t == ts for t, _ in picks):
+                # Keep the two most recent, oldest-first along the x-axis.
+                picks.append((ts, float(p["y"])))
+                st.session_state["_picked"] = sorted(picks[-2:])
+        # The sidebar has already drawn by the time clicks are read, so its
+        # "n of 2 chosen" line would lag a run behind without this. Guarded
+        # on an actual change, so it cannot loop.
+        if st.session_state.get("_picked", []) != before:
+            st.rerun()
+
     # Detected on history alone: the levels are a reference your scenario is
     # measured against, so they must not move as you redraw the bars.
-    imp = (
-        trends.last_impulse(hist, int(swing_n), int(swing_n))
-        if fib_anchor == "Auto (last impulse)"
-        else trends.manual_impulse(
+    if fib_anchor == "Auto (last impulse)":
+        imp = trends.last_impulse(hist, int(swing_n), int(swing_n))
+    elif fib_anchor == "Click two points":
+        picks = st.session_state.get("_picked", [])
+        imp = (
+            trends.Impulse(picks[0][0], picks[0][1], picks[1][0], picks[1][1])
+            if len(picks) == 2
+            else None
+        )
+    else:
+        imp = trends.manual_impulse(
             hist, len(hist) - 1 - int(fib_from), len(hist) - 1 - int(fib_to)
         )
-    )
+
     if imp is None:
         st.info(
-            "No swing found at this sensitivity — lower it, or pick the "
+            "Click two points on the chart to anchor the leg."
+            if fib_anchor == "Click two points"
+            else "No swing found at this sensitivity — lower it, or pick the "
             "leg by hand in the sidebar."
         )
     else:
@@ -686,16 +729,32 @@ fig = charting.build(
     unified_hover=unified_hover,
     events=events,
     overlay_shapes=shapes_v,
+    pickable=(
+        view_hist["Close"]
+        if "Trend & Fibonacci" in chosen and fib_anchor == "Click two points"
+        else None
+    ),
 )
 st.plotly_chart(
     fig,
     width="stretch",
     key="chart",
+    on_select="rerun",
+    selection_mode="points",
     config={
         "scrollZoom": True,
         "displaylogo": False,
         "doubleClick": "reset",
-        "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"],
+        # Freehand annotation. Pick a tool, drag on the chart, and use the
+        # eraser to remove one. These are drawn by you and are not read
+        # back into any calculation.
+        "modeBarButtonsToAdd": [
+            "drawline",
+            "drawopenpath",
+            "drawrect",
+            "eraseshape",
+        ],
+        "modeBarButtonsToRemove": ["lasso2d", "autoScale2d"],
         # Skip the hover-driven redraw plotly does while a drag is in flight.
         "plotGlPixelRatio": 1,
     },

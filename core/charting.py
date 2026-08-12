@@ -68,6 +68,7 @@ def build(
     unified_hover: bool = False,
     events: pd.DataFrame | None = None,
     overlay_shapes: dict | None = None,
+    pickable: pd.Series | None = None,
     height_price: int = 520,
     height_panel: int = 165,
 ) -> go.Figure:
@@ -159,6 +160,24 @@ def build(
             col=1,
         )
 
+    if pickable is not None and not pickable.empty:
+        # Candlesticks do not report clicks usefully, so an invisible marker
+        # per bar sits on top to catch them. Streamlit reads the selection
+        # back and turns it into Fibonacci anchors.
+        fig.add_trace(
+            go.Scatter(
+                x=pickable.index,
+                y=pickable,
+                mode="markers",
+                name="pick",
+                marker=dict(size=14, opacity=0, color="#ffffff"),
+                hovertemplate="%{x|%Y-%m-%d}<br>%{y:.2f}<extra>click to anchor</extra>",
+                showlegend=False,
+            ),
+            row=1,
+            col=1,
+        )
+
     _add_overlays(fig, overlays)
 
     if overlay_shapes:
@@ -207,6 +226,13 @@ def build(
         plot_bgcolor="rgba(0,0,0,0)",
         dragmode="pan",
         bargap=0.15,
+        # Style for anything drawn with the modebar tools.
+        newshape=dict(
+            line=dict(color="#5fa8d3", width=1.6),
+            fillcolor="rgba(95,168,211,0.10)",
+            opacity=0.9,
+            layer="above",
+        ),
     )
     fig.update_xaxes(
         showgrid=True,
