@@ -35,6 +35,10 @@ PRESETS = [
 INTERVALS = ["1d", "1wk", "1mo", "60m", "30m", "15m", "5m"]
 PERIODS = ["6mo", "1y", "2y", "5y", "10y", "max"]
 
+# Upsampling multiplies bars (a month becomes 21 days), so the ceiling has
+# to leave room for a converted scenario rather than truncating it.
+MAX_HORIZON = 250
+
 INDICATORS = [
     "Parabolic SAR",
     "Moving averages",
@@ -67,10 +71,6 @@ def _load(symbol: str, period: str, interval: str) -> pd.DataFrame:
     return data.load(symbol, period, interval).df
 
 
-def _seed_key(symbol: str, interval: str, horizon: int, last: pd.Timestamp) -> tuple:
-    return (symbol, interval, horizon, str(last))
-
-
 # ---------------------------------------------------------------- sidebar
 
 with st.sidebar:
@@ -94,31 +94,110 @@ with st.sidebar:
         interval = col_a.selectbox("Interval", INTERVALS, index=0)
         period = col_b.selectbox("History", PERIODS, index=2)
 
-    # A queued load has to be resolved here, before the horizon slider is
-    # created: Streamlit refuses to let a widget's state be written once the
-    # widget exists, and loading a scenario changes the bar count.
+    # Read before the conversion block below, which runs before the horizon
+    # slider and needs these settings already resolved.
+    fill_label = st.selectbox(
+        "Gap fill on finer intervals",
+        ["Random walk", "Straight line"],
+        help="Going from a coarse interval to a finer one has to invent the "
+        "bars in between. Either way your open, high, low and close are "
+        "reproduced exactly — only the path between them differs.",
+    )
+    fill_mode = resample.RANDOM if fill_label == "Random walk" else resample.STRAIGHT
+    fill_seed = (
+        st.number_input(
+            "Fill seed", 0, 9999, 0, step=1, help="Change it to reroll the path."
+        )
+        if fill_mode == resample.RANDOM
+        else 0
+    )
+
+    # Re-rolling has to invalidate remembered bars, or a switch back would
+    # restore the previous path and the new seed would look ignored.
+    fill_sig = (fill_mode, int(fill_seed))
+    if st.session_state.get("_fill_sig") not in (None, fill_sig):
+        st.session_state["bars_memo"] = {}
+    st.session_state["_fill_sig"] = fill_sig
+
+    # Anything that changes the bar count has to be resolved here, before the
+    # horizon slider is created: Streamlit refuses to let a widget's state be
+    # written once the widget exists.
+    def _stage(frame, note: str) -> None:
+        st.session_state["_loaded_bars"] = frame
+        st.session_state["horizon"] = int(min(max(len(frame), 1), MAX_HORIZON))
+        if len(frame) > MAX_HORIZON:
+            note += f" (trimmed to {MAX_HORIZON})"
+        st.session_state["_load_note"] = note
+
     if st.session_state.get("_pending_scenario") is not None:
         try:
             sc = st.session_state.pop("_pending_scenario")
-            conv = resample.convert(sc.bars, sc.interval, interval)
-            st.session_state["_loaded_bars"] = conv
-            st.session_state["horizon"] = int(min(max(len(conv), 1), 60))
-            st.session_state["_load_note"] = (
+            conv = resample.convert(
+                sc.bars, sc.interval, interval, fill=fill_mode, seed=int(fill_seed)
+            )
+            _stage(
+                conv,
                 f"Loaded “{sc.name}” ({sc.symbol} {sc.interval})"
                 + (
                     f" → converted to {len(conv)} × {interval} bars"
                     if sc.interval != interval
                     else ""
-                )
+                ),
             )
         except Exception as e:  # noqa: BLE001
-            st.session_state["_load_error"] = str(e)
+            st.session_state["_load_error"] = f"Could not load that scenario: {e}"
             st.session_state.pop("_pending_scenario", None)
+
+    # Switching timeframe converts the bars you already drew rather than
+    # throwing them away: draw on weekly, flip to daily, keep your shape.
+    meta = st.session_state.get("bars_meta")
+    have = st.session_state.get("bars")
+    if (
+        meta
+        and have is not None
+        and not have.empty
+        and meta["symbol"] == symbol
+        and meta["interval"] != interval
+        and "_loaded_bars" not in st.session_state
+    ):
+        try:
+            prev_iv = meta["interval"]
+            conv = resample.convert(
+                have, prev_iv, interval, fill=fill_mode, seed=int(fill_seed)
+            )
+            note = (
+                f"Converted your {len(have)} × {prev_iv} bars → "
+                f"{len(conv)} × {interval}"
+            )
+
+            # Coarsening loses detail: five distinct daily bars collapse into
+            # one weekly bar, and expanding that back gives a straight line
+            # rather than the days you drew. So if we have been at this
+            # interval before and the coarse view has not been edited since,
+            # restore exactly what was drawn instead of re-deriving it.
+            memo = st.session_state.get("bars_memo", {})
+            kept = memo.get(interval)
+            if kept is not None and resample.same_ohlc(
+                resample.convert(
+                    kept, interval, prev_iv, fill=fill_mode, seed=int(fill_seed)
+                ),
+                have,
+            ):
+                conv = kept
+                note = f"Restored your {len(kept)} × {interval} bars"
+
+            _stage(conv, note)
+        except resample.IntervalMismatch as e:
+            # Intraday <-> daily has no fixed ratio; reseed rather than guess.
+            st.session_state["_load_error"] = f"Kept your bars out of it — {e}"
+            st.session_state["_force_reseed"] = True
 
     st.divider()
     st.subheader("Bars to predict")
 
-    horizon = st.slider("How many bars", 1, 60, 5, key="horizon")
+    if "horizon" not in st.session_state:
+        st.session_state["horizon"] = 5
+    horizon = st.slider("How many bars", 1, MAX_HORIZON, key="horizon")
     src_name = st.selectbox(
         "Bar source", predictors.names(), index=0,
         help="How the bars are seeded. You can edit any of them afterwards.",
@@ -261,31 +340,64 @@ fut_idx = data.future_index(series, horizon)
 
 # ------------------------------------------------- predicted bars (state)
 
-key = _seed_key(symbol, interval, horizon, hist.index[-1])
+# Bars persist across setting changes. Only an explicit reseed, a new
+# symbol, or a change of bar source throws away what you drew -- moving the
+# horizon resizes, and changing interval converts (handled in the sidebar).
+src_sig = (src_name, tuple(sorted(cfg.items())))
+meta = st.session_state.get("bars_meta")
 
 loaded = st.session_state.pop("_loaded_bars", None)
+forced = st.session_state.pop("_force_reseed", False)
+existing = st.session_state.get("bars")
+
 if loaded is not None:
-    # Re-anchor onto the current future index; the saved timestamps belong
-    # to whenever the scenario was drawn.
-    n = min(len(loaded), len(fut_idx))
-    frame = loaded.iloc[:n].copy()
-    frame.index = fut_idx[:n]
-    frame.index.name = "Date"
-    st.session_state["bars"] = predictors.sanitize(frame)
-    st.session_state["_key"] = key
-elif regen or st.session_state.get("_key") != key or "bars" not in st.session_state:
-    st.session_state["_key"] = key
-    st.session_state["bars"] = predictors.build(src_name, **cfg).propose(hist, fut_idx)
-elif st.session_state.get("_src") != (src_name, tuple(sorted(cfg.items()))):
-    st.session_state["bars"] = predictors.build(src_name, **cfg).propose(hist, fut_idx)
-st.session_state["_src"] = (src_name, tuple(sorted(cfg.items())))
+    base = loaded
+elif (
+    forced
+    or existing is None
+    or existing.empty
+    or meta is None
+    or meta["symbol"] != symbol
+    or regen
+    or st.session_state.get("_src") != src_sig
+):
+    base = predictors.build(src_name, **cfg).propose(hist, fut_idx)
+else:
+    base = existing
+
+# Length follows the horizon slider; the index always re-anchors to the
+# current future stamps, so a new trading day shifts bars without wiping.
+base = resample.fit_length(base, len(fut_idx))
+base = base.reset_index(drop=True)
+base.index = fut_idx
+base.index.name = "Date"
+
+st.session_state["bars"] = predictors.sanitize(base)
+st.session_state["_src"] = src_sig
+
+# Remember this timeframe's bars so switching away and back restores the
+# detail rather than a re-derived approximation. A reseed or a new symbol
+# invalidates everything remembered.
+if (
+    meta is None
+    or meta["symbol"] != symbol
+    or forced
+    or regen
+    or (loaded is None and st.session_state.get("_src_prev") != src_sig)
+):
+    st.session_state["bars_memo"] = {}
+st.session_state["_src_prev"] = src_sig
+st.session_state.setdefault("bars_memo", {})[interval] = st.session_state[
+    "bars"
+].copy()
+st.session_state["bars_meta"] = {"symbol": symbol, "interval": interval}
 
 pred = st.session_state["bars"]
 
 if note := st.session_state.pop("_load_note", None):
     st.success(note, icon="✅")
 if err := st.session_state.pop("_load_error", None):
-    st.error(f"Could not load scenario: {err}")
+    st.error(err)
 
 # ------------------------------------------------------------ header strip
 
@@ -440,7 +552,9 @@ with edit_col:
             "Close": st.column_config.NumberColumn(format="%.2f"),
             "Volume": st.column_config.NumberColumn(format="%.0f"),
         },
-        key=f"editor_{key}_{src_name}",
+        # Rebuild the editor whenever the bar set is replaced wholesale,
+        # otherwise it keeps showing the previous rows.
+        key=f"editor_{symbol}_{interval}_{len(pred)}_{src_name}",
     )
     clean = predictors.sanitize(edited)
     if not clean.equals(st.session_state["bars"]):

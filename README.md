@@ -139,10 +139,38 @@ Under the bars table, **Save / load this scenario**:
 
 Both routes write the same JSON, so a file saved one way loads the other.
 
-Because the interval is stored, a scenario drawn on one timeframe can be
-loaded onto another. Draw three weekly bars, switch the chart to `1d`, load
-it back, and each week is expanded into five daily bars that still add up to
-what you drew:
+### Changing timeframe converts what you drew
+
+You do not need to save and reload to change timeframe. **Switch the Interval
+dropdown and the bars you already drew are converted in place.** Draw three
+weekly bars, flip to `1d`, and you have fifteen daily bars carrying the same
+shape. Flip back and you get your three weekly bars again, unchanged.
+
+Bars are sticky in general — they survive every setting change except the
+ones that mean "start over":
+
+| Change | What happens to your bars |
+|---|---|
+| Interval | Converted to the new timeframe |
+| Horizon slider | Resized — shrinking keeps the front, growing pads flat |
+| Indicators, chart display | Untouched |
+| Symbol | Reseeded (different instrument) |
+| Bar source or its settings | Reseeded (you asked for a new shape) |
+| **Reseed bars** button | Reseeded |
+
+Conversion works **both ways, without losing detail**. Coarsening is
+genuinely lossy — one weekly bar cannot encode five distinct daily paths, so
+naively expanding it back would hand you a straight line instead of the days
+you drew. The dashboard therefore remembers the bars at each timeframe and
+restores them when you return, as long as you have not edited the coarse
+view in between. Edit the weekly bar and going back to daily re-derives from
+your edit, rather than silently restoring stale days.
+
+Intraday↔daily is the one conversion that is refused; your bars are left
+alone and a message explains why.
+
+Loading a saved scenario works the same way, so a file saved at any interval
+opens correctly at any other:
 
 ```
 first daily open   == the weekly open
@@ -151,11 +179,20 @@ max of daily highs == the weekly high
 min of daily lows  == the weekly low
 ```
 
-The closes in between walk a straight line from open to close, so filling the
-gaps never invents swings you did not draw. `test_upsampled_closes_are_monotonic`
-enforces that; `test_round_trip_weekly_daily_weekly_is_identity` checks the
-conversion is lossless both ways. Going the other direction (daily → weekly)
-is ordinary OHLC aggregation, and a short final group still becomes a bar.
+**Gap fill** decides what the invented bars in between look like:
+
+- **Random walk** (default) — a Brownian bridge pinned to your open and
+  close, so the interior wanders like a real session. It is *scaled* to fit
+  inside the coarse bar's range rather than clipped against it; clipping
+  leaves runs of identical closes that look nothing like a real chart.
+  Seeded per bar, so the path is stable across Streamlit reruns and only
+  changes when you change the seed.
+- **Straight line** — a monotonic path from open to close. Nothing between
+  your endpoints moves against the direction you drew.
+
+Either way the bars you drew are reproduced exactly, and nothing escapes
+their range. Going the other direction (daily → weekly) is ordinary OHLC
+aggregation, and a short final group still becomes a bar.
 
 Ratios are in trading bars, not calendar time: a week is 5 sessions, a month
 21. Intraday↔daily conversion is **refused** rather than guessed, because the

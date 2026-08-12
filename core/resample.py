@@ -59,44 +59,113 @@ def ratio(src: str, dst: str) -> float:
     return BAR_UNITS[src] / BAR_UNITS[dst]
 
 
-def _split_bar(bar: pd.Series, k: int) -> list[dict]:
+STRAIGHT = "straight"
+RANDOM = "random"
+FILL_MODES = (RANDOM, STRAIGHT)
+
+
+def _close_path(o: float, c: float, h: float, l: float, k: int, rng) -> np.ndarray:
+    """Closes for `k` sub-bars, running from just after `o` to exactly `c`.
+
+    With no generator this is a straight line. With one it is a Brownian
+    bridge -- a random walk pinned at both ends -- so the interior wanders
+    like a real session instead of ruling a line, while still landing on the
+    close you drew. The path is confined to [l, h], so no sub-bar can escape
+    the range of the coarse bar it came from.
+    """
+    t = np.arange(1, k + 1, dtype="float64") / k
+    line = o + (c - o) * t
+    if rng is None or k < 2:
+        return line
+
+    span = h - l
+    if span <= 0:
+        return line
+
+    # Pin a random walk at both ends, then scale it to the bar's range.
+    steps = rng.normal(0.0, 1.0, k)
+    walk = np.cumsum(steps)
+    bridge = walk - t * walk[-1]
+    peak = float(np.abs(bridge).max())
+    if peak < 1e-9:
+        return line
+
+    # Scale so the path fits inside [l, h] on its own. Clipping instead
+    # would flatten every excursion against the boundary and leave runs of
+    # identical closes, which look nothing like a real session.
+    headroom = np.where(bridge >= 0, h - line, line - l)
+    fits = float(np.min(headroom / np.maximum(np.abs(bridge), 1e-9)))
+    scale = min(0.32 * span / peak, max(fits, 0.0) * 0.95)
+
+    path = line + scale * bridge
+    path[-1] = c  # the close you drew is not negotiable
+    return np.clip(path, l, h)
+
+
+def _split_bar(bar: pd.Series, k: int, rng=None) -> list[dict]:
     """Expand one coarse bar into `k` finer bars that reproduce its OHLC."""
     o, h, l, c = (float(bar[x]) for x in ("Open", "High", "Low", "Close"))
     vol = float(bar["Volume"]) / k
 
-    # Straight-line path of closes, landing exactly on the coarse close.
-    closes = [o + (c - o) * (i + 1) / k for i in range(k)]
-    opens = [o] + closes[:-1]
+    closes = _close_path(o, c, h, l, k, rng)
+    opens = np.r_[o, closes[:-1]]
 
-    highs = [max(a, b) for a, b in zip(opens, closes)]
-    lows = [min(a, b) for a, b in zip(opens, closes)]
+    highs = np.maximum(opens, closes)
+    lows = np.minimum(opens, closes)
 
-    # Park the extremes at the ends, in the order a real bar of this
-    # direction usually makes them: an up bar dips first and peaks last.
-    if c >= o:
-        lows[0] = min(lows[0], l)
-        highs[-1] = max(highs[-1], h)
-    else:
-        highs[0] = max(highs[0], h)
-        lows[-1] = min(lows[-1], l)
+    if rng is not None and k > 1:
+        # Give each sub-bar its own wick, kept inside the coarse range.
+        span = h - l
+        highs = np.minimum(highs + np.abs(rng.normal(0, 0.10 * span, k)), h)
+        lows = np.maximum(lows - np.abs(rng.normal(0, 0.10 * span, k)), l)
+        highs = np.maximum(highs, np.maximum(opens, closes))
+        lows = np.minimum(lows, np.minimum(opens, closes))
+
+    # The coarse extremes have to appear somewhere, or the aggregate no
+    # longer matches what was drawn. Put them on the bars already nearest.
+    highs[int(np.argmax(highs))] = h
+    lows[int(np.argmin(lows))] = l
+
+    if rng is None:
+        # Straight-line mode keeps the classic placement: an up bar dips
+        # first and peaks last.
+        highs = np.maximum(opens, closes)
+        lows = np.minimum(opens, closes)
+        if c >= o:
+            lows[0] = min(lows[0], l)
+            highs[-1] = max(highs[-1], h)
+        else:
+            highs[0] = max(highs[0], h)
+            lows[-1] = min(lows[-1], l)
 
     return [
         {
-            "Open": opens[i],
-            "High": highs[i],
-            "Low": lows[i],
-            "Close": closes[i],
+            "Open": float(opens[i]),
+            "High": float(highs[i]),
+            "Low": float(lows[i]),
+            "Close": float(closes[i]),
             "Volume": vol,
         }
         for i in range(k)
     ]
 
 
-def upsample(df: pd.DataFrame, k: int) -> pd.DataFrame:
-    """One coarse bar becomes `k` finer bars."""
+def upsample(
+    df: pd.DataFrame, k: int, fill: str = STRAIGHT, seed: int = 0
+) -> pd.DataFrame:
+    """One coarse bar becomes `k` finer bars.
+
+    `fill` picks how the interior is drawn: STRAIGHT rules a line from open
+    to close, RANDOM wanders between them. RANDOM is seeded per bar index,
+    so the result is stable across Streamlit reruns -- the chart must not
+    reshuffle itself every time an unrelated widget moves.
+    """
     rows: list[dict] = []
-    for _, bar in df.iterrows():
-        rows.extend(_split_bar(bar, k))
+    for i, (_, bar) in enumerate(df.iterrows()):
+        rng = (
+            np.random.default_rng([int(seed), i]) if fill == RANDOM else None
+        )
+        rows.extend(_split_bar(bar, k, rng))
     return pd.DataFrame(rows, columns=COLUMNS).astype("float64")
 
 
@@ -119,7 +188,13 @@ def downsample(df: pd.DataFrame, k: int) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=COLUMNS).astype("float64")
 
 
-def convert(df: pd.DataFrame, src: str, dst: str) -> pd.DataFrame:
+def convert(
+    df: pd.DataFrame,
+    src: str,
+    dst: str,
+    fill: str = STRAIGHT,
+    seed: int = 0,
+) -> pd.DataFrame:
     """Re-express bars drawn at `src` in terms of `dst` bars.
 
     The returned frame has a plain RangeIndex; the caller assigns real
@@ -134,8 +209,60 @@ def convert(df: pd.DataFrame, src: str, dst: str) -> pd.DataFrame:
     if r == 1:
         return out
     if r > 1:
-        return upsample(out, int(round(r)))
+        return upsample(out, int(round(r)), fill=fill, seed=seed)
     return downsample(out, int(round(1 / r)))
+
+
+def same_ohlc(a: pd.DataFrame, b: pd.DataFrame, tol: float = 1e-6) -> bool:
+    """Do two frames hold the same bars, ignoring index and volume?"""
+    if a is None or b is None or len(a) != len(b):
+        return False
+    cols = ["Open", "High", "Low", "Close"]
+    try:
+        return bool(
+            np.allclose(
+                a[cols].to_numpy(dtype="float64"),
+                b[cols].to_numpy(dtype="float64"),
+                atol=tol,
+                rtol=0,
+            )
+        )
+    except Exception:  # noqa: BLE001 - shape or dtype mismatch means "no"
+        return False
+
+
+def fit_length(df: pd.DataFrame, n: int) -> pd.DataFrame:
+    """Make the frame exactly `n` bars long without discarding drawn work.
+
+    Shrinking keeps the leading bars; growing continues flat from the last
+    close, which adds no direction of its own. Used when the horizon slider
+    moves, so nudging it no longer wipes a scenario.
+    """
+    if n <= 0:
+        return df.iloc[:0].copy()
+    if df.empty:
+        return df.copy()
+    if len(df) == n:
+        return df.copy()
+    if len(df) > n:
+        return df.iloc[:n].copy()
+
+    last = df.iloc[-1]
+    close = float(last["Close"])
+    pad = pd.DataFrame(
+        [
+            {
+                "Open": close,
+                "High": close,
+                "Low": close,
+                "Close": close,
+                "Volume": float(last["Volume"]),
+            }
+        ]
+        * (n - len(df)),
+        columns=COLUMNS,
+    )
+    return pd.concat([df[COLUMNS], pad], ignore_index=True).astype("float64")
 
 
 def describe(df: pd.DataFrame, src: str, dst: str) -> str:

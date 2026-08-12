@@ -142,6 +142,170 @@ def test_store_round_trip(tmp_dir: Path | None = None):
     assert not any(s.name == name for s in store.list_all())
 
 
+def test_random_fill_preserves_every_coarse_bar():
+    for src in (UP, DOWN):
+        out = resample.convert(src, "1wk", "1d", fill=resample.RANDOM, seed=3)
+        assert len(out) == len(src) * 5
+        for i in range(len(src)):
+            week, days = src.iloc[i], out.iloc[i * 5 : (i + 1) * 5]
+            assert np.isclose(days["Open"].iloc[0], week["Open"]), "open"
+            assert np.isclose(days["Close"].iloc[-1], week["Close"]), "close"
+            assert np.isclose(days["High"].max(), week["High"]), "high"
+            assert np.isclose(days["Low"].min(), week["Low"]), "low"
+
+
+def test_random_fill_stays_inside_the_coarse_range():
+    for src in (UP, DOWN):
+        out = resample.convert(src, "1wk", "1d", fill=resample.RANDOM, seed=5)
+        for i in range(len(src)):
+            week, days = src.iloc[i], out.iloc[i * 5 : (i + 1) * 5]
+            assert (days["High"] <= week["High"] + 1e-9).all()
+            assert (days["Low"] >= week["Low"] - 1e-9).all()
+
+
+def test_random_fill_is_reproducible_and_seed_sensitive():
+    a = resample.convert(UP, "1wk", "1d", fill=resample.RANDOM, seed=11)
+    b = resample.convert(UP, "1wk", "1d", fill=resample.RANDOM, seed=11)
+    c = resample.convert(UP, "1wk", "1d", fill=resample.RANDOM, seed=12)
+    # Stability matters: Streamlit reruns constantly and the chart must not
+    # reshuffle itself whenever an unrelated widget moves.
+    assert resample.same_ohlc(a, b)
+    assert not resample.same_ohlc(a, c)
+
+
+def test_random_fill_does_not_flatten_against_the_bounds():
+    """Scaling, not clipping: a clipped bridge leaves runs of dead closes."""
+    wide = _bars([[100, 125, 92, 118, 1000], [118, 140, 112, 120, 900]])
+    out = resample.convert(wide, "1wk", "1d", fill=resample.RANDOM, seed=7)
+    flat = int((out["Close"].diff().abs() < 1e-9).sum())
+    assert flat == 0, f"{flat} consecutive identical closes"
+
+
+def test_random_fill_holds_invariants_over_many_shapes():
+    rng = np.random.default_rng(0)
+    for trial in range(150):
+        o = float(rng.uniform(50, 500))
+        c = o * float(rng.uniform(0.85, 1.15))
+        h = max(o, c) * float(rng.uniform(1.0, 1.15))
+        l = min(o, c) * float(rng.uniform(0.85, 1.0))
+        src = _bars([[o, h, l, c, 100]])
+        for a, b in (("1wk", "1d"), ("1mo", "1d"), ("60m", "5m")):
+            out = resample.convert(src, a, b, fill=resample.RANDOM, seed=trial)
+            assert np.isclose(out["Open"].iloc[0], o), (trial, a, b)
+            assert np.isclose(out["Close"].iloc[-1], c), (trial, a, b)
+            assert np.isclose(out["High"].max(), h), (trial, a, b)
+            assert np.isclose(out["Low"].min(), l), (trial, a, b)
+            assert (out["High"] >= out[["Open", "Close"]].max(axis=1) - 1e-9).all()
+            assert (out["Low"] <= out[["Open", "Close"]].min(axis=1) + 1e-9).all()
+
+
+def test_random_fill_round_trips_back_to_the_coarse_bar():
+    out = resample.convert(UP, "1wk", "1d", fill=resample.RANDOM, seed=2)
+    back = resample.convert(out, "1d", "1wk")
+    for c in ("Open", "High", "Low", "Close"):
+        np.testing.assert_allclose(back[c], UP[c], atol=1e-9, err_msg=c)
+
+
+def test_straight_fill_is_still_the_monotonic_one():
+    out = resample.convert(UP, "1wk", "1d", fill=resample.STRAIGHT, seed=0)
+    for i in range(len(UP)):
+        closes = out["Close"].iloc[i * 5 : (i + 1) * 5].to_numpy()
+        assert (np.diff(closes) >= -1e-9).all()
+
+
+def test_downsampling_loses_detail_that_upsampling_cannot_invent():
+    """Documents why the app memoises bars per interval.
+
+    One weekly bar cannot encode five distinct daily paths, so
+    daily -> weekly -> daily is lossy in a way the reverse is not. The
+    dashboard works around it by remembering what you drew at each
+    timeframe; this test pins the underlying maths.
+    """
+    daily = _bars(
+        [
+            [100, 104, 99, 103, 10],
+            [103, 109, 102, 108, 10],
+            [108, 110, 101, 102, 10],
+            [102, 106, 100, 105, 10],
+            [105, 112, 104, 111, 10],
+        ]
+    )
+    weekly = resample.convert(daily, "1d", "1wk")
+    back = resample.convert(weekly, "1wk", "1d")
+
+    # The envelope survives...
+    assert np.isclose(back["Open"].iloc[0], daily["Open"].iloc[0])
+    assert np.isclose(back["Close"].iloc[-1], daily["Close"].iloc[-1])
+    assert np.isclose(back["High"].max(), daily["High"].max())
+    assert np.isclose(back["Low"].min(), daily["Low"].min())
+    # ...but the interior path does not, and must not be claimed to.
+    assert not resample.same_ohlc(back, daily)
+
+
+def test_same_ohlc():
+    a = _bars([[100, 110, 90, 105, 10], [105, 115, 100, 108, 20]])
+    assert resample.same_ohlc(a, a.copy())
+
+    # Volume and index are deliberately ignored.
+    b = a.copy()
+    b["Volume"] = [999.0, 888.0]
+    b.index = pd.bdate_range("2030-01-01", periods=2)
+    assert resample.same_ohlc(a, b)
+
+    c = a.copy()
+    c.loc[c.index[1], "Close"] = 108.5
+    assert not resample.same_ohlc(c, a)
+
+    assert not resample.same_ohlc(a, a.iloc[:1])
+    assert not resample.same_ohlc(a, None)
+    assert not resample.same_ohlc(None, a)
+
+
+def test_same_ohlc_tolerance():
+    a = _bars([[100, 110, 90, 105, 10]])
+    b = a.copy()
+    b.loc[b.index[0], "Close"] = 105 + 1e-9
+    assert resample.same_ohlc(a, b)
+    b.loc[b.index[0], "Close"] = 105.01
+    assert not resample.same_ohlc(a, b)
+
+
+def test_fit_length_truncates_keeping_the_front():
+    src = _bars([[100 + i, 105 + i, 95 + i, 102 + i, 10] for i in range(8)])
+    out = resample.fit_length(src, 3)
+    assert len(out) == 3
+    np.testing.assert_allclose(out["Close"].to_numpy(), src["Close"].to_numpy()[:3])
+
+
+def test_fit_length_pads_flat_from_the_last_close():
+    src = _bars([[100, 110, 90, 105, 10], [105, 115, 100, 108, 20]])
+    out = resample.fit_length(src, 5)
+    assert len(out) == 5
+    # Drawn bars survive untouched.
+    np.testing.assert_allclose(out["Close"].to_numpy()[:2], [105.0, 108.0])
+    # Padding is flat at the last close, so it adds no direction.
+    pad = out.iloc[2:]
+    for c in ("Open", "High", "Low", "Close"):
+        np.testing.assert_allclose(pad[c].to_numpy(), [108.0] * 3, err_msg=c)
+
+
+def test_fit_length_edge_cases():
+    src = _bars([[100, 110, 90, 105, 10]])
+    assert len(resample.fit_length(src, 1)) == 1
+    assert resample.fit_length(src, 0).empty
+    assert resample.fit_length(src, -2).empty
+    assert resample.fit_length(_bars([]), 4).empty
+
+
+def test_shrinking_then_growing_keeps_the_surviving_bars():
+    """Nudging the horizon down and back must not corrupt what is left."""
+    src = _bars([[100 + i, 106 + i, 94 + i, 103 + i, 10] for i in range(6)])
+    small = resample.fit_length(src, 2)
+    back = resample.fit_length(small, 6)
+    np.testing.assert_allclose(back["Close"].to_numpy()[:2], src["Close"].to_numpy()[:2])
+    assert len(back) == 6
+
+
 def test_download_upload_round_trip():
     """Bytes handed to the browser must parse back to the same scenario."""
     bars = UP.copy()
