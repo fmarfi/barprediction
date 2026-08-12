@@ -116,6 +116,7 @@ def build(
     pickable: dict[str, pd.Series] | None = None,
     dragmode: str = "pan",
     style: str = CANDLES,
+    notes: list[dict] | None = None,
     height_price: int = 520,
     height_panel: int = 165,
 ) -> go.Figure:
@@ -230,6 +231,8 @@ def build(
 
     if overlay_shapes:
         _add_trend_and_fib(fig, overlay_shapes, t)
+
+    _add_notes(fig, notes, t)
 
     if events is not None and not events.empty and not predicted.empty:
         _add_event_markers(fig, events, predicted, t)
@@ -515,6 +518,44 @@ def _add_trend_and_fib(fig: go.Figure, shapes: dict, t: dict) -> None:
             bgcolor=t["tag_bg"],
             borderpad=1,
             opacity=0.92,
+        )
+
+
+def _add_notes(fig: go.Figure, notes: list[dict] | None, t: dict) -> None:
+    """Text boxes the user placed on the price panel."""
+    for n in notes or []:
+        try:
+            text = str(n["text"]).strip()
+            x = _dt(pd.Timestamp(n["ts"]))
+            y = float(n["price"])
+        except Exception:  # noqa: BLE001 - skip a malformed note, keep the rest
+            continue
+        if not text:
+            continue
+        # Wrap long notes so one sentence does not stretch across the chart.
+        wrapped = "<br>".join(
+            text[i : i + 34] for i in range(0, len(text), 34)
+        )
+        fig.add_annotation(
+            x=x,
+            y=y,
+            text=wrapped,
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=0.9,
+            arrowwidth=1,
+            arrowcolor=t["muted"],
+            ax=0,
+            ay=-34,
+            align="left",
+            font=dict(size=10, color=t["text"]),
+            bgcolor=t["tag_bg"],
+            bordercolor=t["muted"],
+            borderwidth=1,
+            borderpad=4,
+            opacity=0.95,
+            row=1,
+            col=1,
         )
 
 

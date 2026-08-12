@@ -7,6 +7,7 @@ the close.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -358,6 +359,49 @@ def test_filename_is_filesystem_safe():
     name = store.filename_for("my / bad: name*", "XU100.IS", "1d")
     assert not set(name) & set('/\\:*?"<>|')
     assert name.endswith(".json")
+
+
+def test_notes_survive_a_save_and_load():
+    bars = UP.copy()
+    bars.index = pd.bdate_range("2026-08-13", periods=2)
+    notes = [
+        {"ts": "2026-08-13", "price": 110.5, "text": "gap fills here"},
+        {"ts": "2026-08-14", "price": 96.0, "text": "watch this level"},
+    ]
+    sc = store.from_json_bytes(
+        store.to_json_bytes("n", "X", "1d", bars, notes)
+    )
+    assert len(sc.notes) == 2
+    assert sc.notes[0]["text"] == "gap fills here"
+    assert np.isclose(sc.notes[1]["price"], 96.0)
+
+
+def test_malformed_notes_are_dropped_not_raised():
+    """One bad note must not take the download button -- and the page -- down."""
+    bad = [
+        {"ts": "2026-08-13", "price": 100.0, "text": "good"},
+        {"ts": "not-a-date", "price": 1.0, "text": "bad date"},
+        {"ts": "2026-08-14", "price": "x", "text": "bad price"},
+        {"nope": 1},
+        None,
+    ]
+    cleaned = store.clean_notes(bad)
+    assert len(cleaned) == 1 and cleaned[0]["text"] == "good"
+
+    bars = UP.copy()
+    bars.index = pd.bdate_range("2026-08-13", periods=2)
+    sc = store.from_json_bytes(store.to_json_bytes("n", "X", "1d", bars, bad))
+    assert len(sc.notes) == 1
+
+
+def test_files_without_notes_still_load():
+    bars = UP.copy()
+    bars.index = pd.bdate_range("2026-08-13", periods=2)
+    blob = store.to_json_bytes("n", "X", "1d", bars)
+    payload = json.loads(blob.decode())
+    del payload["notes"]  # as written before notes existed
+    sc = store.from_json_bytes(json.dumps(payload).encode())
+    assert sc.notes == ()
 
 
 def test_ip_is_local_accepts_loopback():

@@ -280,6 +280,12 @@ ratio depends on session length.
 
 ## Reading the chart
 
+**Notes on the chart** — under the bars table. Type the text, pick the bar
+and the price, press **Add**, and it appears as a labelled box with an arrow
+pointing at that spot. Long notes wrap. Remove one with the ✕ beside it.
+Notes are saved and loaded with the scenario, so a downloaded file carries
+your annotations with it.
+
 **Price style** (sidebar, Display) switches between **Candles**, **OHLC
 bars** and **Line**. All three show the same bars — OHLC draws open and
 close as ticks either side of the range, Line plots closes only.

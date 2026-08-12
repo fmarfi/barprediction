@@ -191,6 +191,8 @@ with st.sidebar:
             conv = resample.convert(
                 sc.bars, sc.interval, interval, fill=fill_mode, seed=int(fill_seed)
             )
+            if sc.notes:
+                st.session_state["notes"] = [dict(n) for n in sc.notes]
             _remember_fill_source(sc.bars, sc.interval)
             _stage(
                 conv,
@@ -505,6 +507,11 @@ st.session_state.setdefault("bars_memo", {})[interval] = st.session_state[
 st.session_state["bars_meta"] = {"symbol": symbol, "interval": interval}
 
 pred = st.session_state["bars"]
+
+# Normalise before anything reads them: the chart is built further down,
+# and a note that arrived malformed -- from a hand-edited file, say --
+# would otherwise take out the chart, the list and the save button.
+st.session_state["notes"] = store.clean_notes(st.session_state.get("notes"))
 
 if note := st.session_state.pop("_load_note", None):
     st.success(note, icon="✅")
@@ -828,6 +835,7 @@ fig = charting.build(
     ),
     dragmode="select" if picking else "pan",
     style=chart_style,
+    notes=st.session_state.get("notes", []),
 )
 st.plotly_chart(
     fig,
@@ -892,7 +900,9 @@ with edit_col:
     save_col, open_col = st.columns(2)
     save_col.download_button(
         "💾  Save bars",
-        data=store.to_json_bytes(label, symbol, interval, pred),
+        data=store.to_json_bytes(
+            label, symbol, interval, pred, st.session_state.get("notes", [])
+        ),
         file_name=store.filename_for(label, symbol, interval),
         mime="application/json",
         width="stretch",
@@ -941,7 +951,10 @@ with edit_col:
                 "Save here", width="stretch", disabled=not scen_name
             ):
                 try:
-                    p = store.save(scen_name, symbol, interval, pred)
+                    p = store.save(
+                        scen_name, symbol, interval, pred,
+                        st.session_state.get("notes", []),
+                    )
                     st.success(f"Saved → {p.name}")
                 except Exception as e:  # noqa: BLE001
                     st.error(f"Could not save: {e}")
@@ -964,6 +977,40 @@ with edit_col:
                         st.rerun()
 
 with sig_col:
+    with st.expander(f"Notes on the chart ({len(st.session_state['notes'])})"):
+        nt, nd, npr, nb = st.columns([5, 3, 2, 1.6], vertical_alignment="bottom")
+        note_text = nt.text_input(
+            "Note", "", placeholder="e.g. gap fills here", key="note_text",
+            label_visibility="collapsed",
+        )
+        all_dates = [d.strftime("%Y-%m-%d") for d in full.index]
+        note_date = nd.selectbox(
+            "On", all_dates, index=len(all_dates) - 1, label_visibility="collapsed"
+        )
+        default_price = float(full.loc[pd.Timestamp(note_date), "High"])
+        note_price = npr.number_input(
+            "At", value=round(default_price, 2), step=1.0,
+            label_visibility="collapsed", key="note_price",
+        )
+        if nb.button("Add", width="stretch", disabled=not note_text.strip()):
+            st.session_state.setdefault("notes", []).append(
+                {
+                    "ts": str(pd.Timestamp(note_date)),
+                    "price": float(note_price),
+                    "text": note_text.strip(),
+                }
+            )
+            st.rerun()
+
+        for i, n in enumerate(list(st.session_state["notes"])):
+            row, drop = st.columns([9, 1.2], vertical_alignment="center")
+            row.caption(
+                f"**{n['text']}** — {pd.Timestamp(n['ts']):%d %b} @ {n['price']:,.2f}"
+            )
+            if drop.button("✕", key=f"delnote{i}", help="Remove this note"):
+                st.session_state["notes"].pop(i)
+                st.rerun()
+
     st.markdown("#### Triggered signals")
     if not active:
         st.caption("Pick indicators above the chart to detect events.")

@@ -39,6 +39,7 @@ class Scenario:
     interval: str
     saved_at: str
     bars: pd.DataFrame
+    notes: tuple[dict, ...] = ()
 
     @property
     def label(self) -> str:
@@ -87,7 +88,34 @@ def is_ephemeral() -> bool:
 # --------------------------------------------------------------------------
 
 
-def _payload(name: str, symbol: str, interval: str, bars: pd.DataFrame) -> dict:
+def clean_notes(notes) -> list[dict]:
+    """Drop notes that are not serialisable, keeping the rest.
+
+    The download button is rebuilt on every run, so a single malformed note
+    would otherwise raise and take the whole page down with it.
+    """
+    out: list[dict] = []
+    for n in notes or []:
+        try:
+            out.append(
+                {
+                    "ts": str(pd.Timestamp(n["ts"])),
+                    "price": float(n["price"]),
+                    "text": str(n["text"]),
+                }
+            )
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+def _payload(
+    name: str,
+    symbol: str,
+    interval: str,
+    bars: pd.DataFrame,
+    notes: list[dict] | None = None,
+) -> dict:
     return {
         "format": FORMAT,
         "name": name.strip(),
@@ -98,6 +126,7 @@ def _payload(name: str, symbol: str, interval: str, bars: pd.DataFrame) -> dict:
             {"ts": str(ts), **{c: float(row[c]) for c in COLUMNS}}
             for ts, row in bars[COLUMNS].iterrows()
         ],
+        "notes": clean_notes(notes),
     }
 
 
@@ -115,12 +144,16 @@ def _parse(raw: dict, fallback_name: str = "scenario") -> Scenario:
         index=pd.DatetimeIndex([pd.Timestamp(r["ts"]) for r in rows]),
     )
     df.index.name = "Date"
+    # "notes" is absent in files written before notes existed.
+    notes = clean_notes(raw.get("notes"))
+
     return Scenario(
         name=str(raw.get("name") or fallback_name),
         symbol=str(raw.get("symbol", "?")),
         interval=str(raw.get("interval", "1d")),
         saved_at=str(raw.get("saved_at", "")),
         bars=df,
+        notes=tuple(notes),
     )
 
 
@@ -132,11 +165,17 @@ def _validate(name: str, bars: pd.DataFrame) -> None:
 
 
 def to_json_bytes(
-    name: str, symbol: str, interval: str, bars: pd.DataFrame
+    name: str,
+    symbol: str,
+    interval: str,
+    bars: pd.DataFrame,
+    notes: list[dict] | None = None,
 ) -> bytes:
     """Serialise for st.download_button -- the file goes to the user's device."""
     _validate(name, bars)
-    return json.dumps(_payload(name, symbol, interval, bars), indent=2).encode("utf-8")
+    return json.dumps(
+        _payload(name, symbol, interval, bars, notes), indent=2
+    ).encode("utf-8")
 
 
 def from_json_bytes(data: bytes, fallback_name: str = "uploaded") -> Scenario:
@@ -168,13 +207,20 @@ def _path(name: str) -> Path:
     return DIR / f"{_slug(name)}.json"
 
 
-def save(name: str, symbol: str, interval: str, bars: pd.DataFrame) -> Path:
+def save(
+    name: str,
+    symbol: str,
+    interval: str,
+    bars: pd.DataFrame,
+    notes: list[dict] | None = None,
+) -> Path:
     """Write a scenario to disk, overwriting any file with the same slug."""
     _validate(name, bars)
     DIR.mkdir(parents=True, exist_ok=True)
     p = _path(name)
     p.write_text(
-        json.dumps(_payload(name, symbol, interval, bars), indent=2), encoding="utf-8"
+        json.dumps(_payload(name, symbol, interval, bars, notes), indent=2),
+        encoding="utf-8",
     )
     return p
 
