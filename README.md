@@ -111,6 +111,14 @@ ways to set the anchors:
   receives a selection. Scroll still zooms, and the modebar's pan button is
   still there if you need to move around mid-drag.
 
+  Once a box exists, five fields appear to refine it: the two dates, the
+  **Bottom** and **Top** prices, and **Shift both**, which slides the whole
+  box while keeping its height. The rectangle, the leg line and every level
+  are derived from those numbers, so they move as one and cannot drift out
+  of agreement — which is also why the box is not draggable in the browser:
+  plotly would move the rectangle without telling the app, and the levels
+  would stay behind.
+
 The chart modebar also carries Plotly's freehand tools — **line**, **path**,
 **rectangle** and an **eraser**. Pick a tool, drag on the chart, and draw
 whatever you like: your own trendlines, channels, boxes around a range.

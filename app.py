@@ -583,6 +583,52 @@ if "Trend & Fibonacci" in chosen:
         if bc.button("Clear", width="stretch"):
             st.session_state.pop("_fib_box", None)
             st.rerun()
+
+if "Trend & Fibonacci" in chosen and fib_anchor == "Drag a box" and (
+    st.session_state.get("_fib_box")
+):
+    # Fine-tune the box numerically. Everything -- the rectangle, the leg
+    # line and every level -- is derived from these four numbers, so they
+    # always move together and can never drift out of agreement. Dragging
+    # the rectangle in the browser could not offer that: plotly does not
+    # report the new position back, so the levels would stay behind.
+    _b = st.session_state["_fib_box"]
+    _dates = [d.strftime("%Y-%m-%d") for d in hist.index]
+
+    def _idx_of(v, fallback):
+        try:
+            return _dates.index(pd.Timestamp(v).strftime("%Y-%m-%d"))
+        except (ValueError, TypeError):
+            return fallback
+
+    e1, e2, e3, e4, e5 = st.columns([2, 2, 2, 2, 2])
+    nb_from = e1.selectbox(
+        "Box from", _dates, index=_idx_of(_b["start_ts"], 0), key="fbx_from"
+    )
+    nb_to = e2.selectbox(
+        "to", _dates, index=_idx_of(_b["end_ts"], len(_dates) - 1), key="fbx_to"
+    )
+    step = max(round(float(_b["hi"] - _b["lo"]) / 100.0, 4), 0.01)
+    nb_lo = e3.number_input("Bottom", value=float(_b["lo"]), step=step, key="fbx_lo")
+    nb_hi = e4.number_input("Top", value=float(_b["hi"]), step=step, key="fbx_hi")
+    shift = e5.number_input(
+        "Shift both", value=0.0, step=step, key="fbx_shift",
+        help="Moves the whole box up or down, keeping its height.",
+    )
+
+    lo_v, hi_v = sorted((float(nb_lo) + shift, float(nb_hi) + shift))
+    rising_v = float(_b["end_price"]) >= float(_b["start_price"])
+    updated = {
+        "start_ts": str(pd.Timestamp(nb_from)),
+        "end_ts": str(pd.Timestamp(nb_to)),
+        "start_price": lo_v if rising_v else hi_v,
+        "end_price": hi_v if rising_v else lo_v,
+        "lo": lo_v,
+        "hi": hi_v,
+    }
+    if updated != _b:
+        st.session_state["_fib_box"] = updated
+        st.rerun()
     elif fib_anchor == "Choose exact points":
         sc_.caption(
             "Pick the bar and the price for each end of the leg. "
