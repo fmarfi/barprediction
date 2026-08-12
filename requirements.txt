@@ -1,0 +1,8 @@
+# Floors reflect the APIs this app actually uses:
+#   streamlit 1.61 -- st.pills, st.context.theme, width="stretch"
+#   plotly 5.22    -- subplot/candlestick behaviour relied on in charting.py
+streamlit>=1.61
+plotly>=5.22
+pandas>=2.2
+numpy>=1.26
+yfinance>=0.2.40

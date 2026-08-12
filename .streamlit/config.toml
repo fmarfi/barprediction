@@ -1,0 +1,13 @@
+[theme]
+base = "dark"
+primaryColor = "#42a5f5"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#161a22"
+textColor = "#d5dbe6"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+# Reload the browser as soon as a source file is saved.
+fileWatcherType = "auto"
