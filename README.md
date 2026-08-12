@@ -280,6 +280,10 @@ ratio depends on session length.
 
 ## Reading the chart
 
+**Price style** (sidebar, Display) switches between **Candles**, **OHLC
+bars** and **Line**. All three show the same bars — OHLC draws open and
+close as ticks either side of the range, Line plots closes only.
+
 - Prices sit on the **right**, trading-platform style.
 - Each line gets a **badge** on the right axis showing its current value.
 - **Triangles** mark bars where indicator events fire — green/up for bullish,

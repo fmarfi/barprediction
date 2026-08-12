@@ -45,6 +45,51 @@ THEMES = {
 }
 
 
+CANDLES = "Candles"
+BARS = "OHLC bars"
+LINE_STYLE = "Line"
+STYLES = (CANDLES, BARS, LINE_STYLE)
+
+
+def _price_trace(
+    df: pd.DataFrame,
+    name: str,
+    style: str,
+    up_line: str,
+    down_line: str,
+    up_fill: str,
+    down_fill: str,
+):
+    """Price series as candles, OHLC bars, or a plain close line."""
+    if style == LINE_STYLE:
+        return go.Scatter(
+            x=df.index,
+            y=df["Close"],
+            mode="lines",
+            name=name,
+            line=dict(width=1.6, color=up_line),
+            hovertemplate="%{y:,.2f}<extra>" + name + "</extra>",
+        )
+
+    common = dict(
+        x=df.index,
+        open=df["Open"],
+        high=df["High"],
+        low=df["Low"],
+        close=df["Close"],
+        name=name,
+        increasing_line_color=up_line,
+        decreasing_line_color=down_line,
+        line_width=1,
+    )
+    if style == BARS:
+        # OHLC bars are drawn from lines only, so they take no fill.
+        return go.Ohlc(**common)
+    return go.Candlestick(
+        **common, increasing_fillcolor=up_fill, decreasing_fillcolor=down_fill
+    )
+
+
 def _dt(ts):
     """Plain datetime for layout shapes.
 
@@ -70,6 +115,7 @@ def build(
     overlay_shapes: dict | None = None,
     pickable: dict[str, pd.Series] | None = None,
     dragmode: str = "pan",
+    style: str = CANDLES,
     height_price: int = 520,
     height_panel: int = 165,
 ) -> go.Figure:
@@ -99,37 +145,21 @@ def build(
     )
 
     fig.add_trace(
-        go.Candlestick(
-            x=history.index,
-            open=history["Open"],
-            high=history["High"],
-            low=history["Low"],
-            close=history["Close"],
-            name="History",
-            increasing_line_color=UP,
-            decreasing_line_color=DOWN,
-            increasing_fillcolor=UP,
-            decreasing_fillcolor=DOWN,
-            line_width=1,
-        ),
+        _price_trace(history, "History", style, UP, DOWN, UP, DOWN),
         row=1,
         col=1,
     )
 
     if not predicted.empty:
         fig.add_trace(
-            go.Candlestick(
-                x=predicted.index,
-                open=predicted["Open"],
-                high=predicted["High"],
-                low=predicted["Low"],
-                close=predicted["Close"],
-                name="Your bars",
-                increasing_line_color=PRED_UP,
-                decreasing_line_color=PRED_DOWN,
-                increasing_fillcolor="rgba(102,187,106,0.45)",
-                decreasing_fillcolor="rgba(255,112,67,0.45)",
-                line_width=1,
+            _price_trace(
+                predicted,
+                "Your bars",
+                style,
+                PRED_UP,
+                PRED_DOWN,
+                "rgba(102,187,106,0.45)",
+                "rgba(255,112,67,0.45)",
             ),
             row=1,
             col=1,
@@ -297,6 +327,12 @@ def build(
 
     # Hide weekend gaps so daily candles sit flush.
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+
+    # Plotly greys out everything outside a selection, and an empty
+    # selection -- which is what a double-click leaves behind -- greys out
+    # the entire chart. Anchors are drawn explicitly, so plotly's own
+    # selection styling is never wanted here.
+    fig.update_traces(selectedpoints=None)
     return fig
 
 

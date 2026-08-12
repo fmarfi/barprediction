@@ -388,6 +388,11 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Display")
+    chart_style = st.radio(
+        "Price style", list(charting.STYLES), horizontal=True,
+        help="OHLC bars show the same data with open and close as ticks; "
+        "Line plots closes only.",
+    )
     show_tail = st.slider(
         "History bars shown",
         40,
@@ -822,6 +827,7 @@ fig = charting.build(
         else None
     ),
     dragmode="select" if picking else "pan",
+    style=chart_style,
 )
 st.plotly_chart(
     fig,
