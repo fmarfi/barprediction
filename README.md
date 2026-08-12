@@ -96,11 +96,18 @@ ways to set the anchors:
   Defaults land on the auto-detected swing, so you nudge rather than build
   from nothing, and the resulting leg and its size are printed underneath.
   This is the reliable one: no browser interaction involved.
-- **Click two points** — click the anchors on the chart. **Anchor on**
-  chooses which prices are clickable: **Highs & Lows** (default), **Closes**,
-  or **Every price**. A Fibonacci leg runs extreme to extreme, so snapping
+- **Click two points** — click the anchors on the chart, or drag a box
+  across the swing to take both ends in one gesture. **Anchor on** chooses
+  which prices are clickable: **Highs & Lows** (default), **Closes**, or
+  **Every price**. A Fibonacci leg runs extreme to extreme, so snapping
   everything to the close would quietly measure a different swing. A third
   click rolls the window forward, keeping the latest two; **Clear** resets.
+
+  Selecting this mode switches the chart's drag mode from **pan** to
+  **select**, because a pan drag swallows the gesture and Streamlit never
+  receives a selection — clicks appear to do nothing. Scroll still zooms,
+  and the modebar's pan button is still there if you need to move around
+  mid-pick.
 
 The chart modebar also carries Plotly's freehand tools — **line**, **path**,
 **rectangle** and an **eraser**. Pick a tool, drag on the chart, and draw

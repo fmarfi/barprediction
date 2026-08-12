@@ -69,6 +69,7 @@ def build(
     events: pd.DataFrame | None = None,
     overlay_shapes: dict | None = None,
     pickable: dict[str, pd.Series] | None = None,
+    dragmode: str = "pan",
     height_price: int = 520,
     height_panel: int = 165,
 ) -> go.Figure:
@@ -241,7 +242,10 @@ def build(
         font=dict(color=t["text"], size=11),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        dragmode="pan",
+        # "pan" for normal use; "select" while picking anchors, because a
+        # pan drag swallows the gesture and Streamlit never sees a
+        # selection -- clicks simply do nothing.
+        dragmode=dragmode,
         bargap=0.15,
         # Style for anything drawn with the modebar tools.
         newshape=dict(

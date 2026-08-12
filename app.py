@@ -538,6 +538,7 @@ chosen = chosen or []
 # inside a collapsed sidebar expander where nobody finds them.
 fib_anchor = "Auto (last impulse)"
 fib_from = fib_to = 0
+picking = False
 if "Trend & Fibonacci" in chosen:
     lc, sc_, bc = st.columns([3, 4, 1.4], vertical_alignment="bottom")
     fib_anchor = lc.radio(
@@ -547,11 +548,12 @@ if "Trend & Fibonacci" in chosen:
         label_visibility="collapsed",
     )
     if fib_anchor == "Click two points":
+        picking = True
         picked = st.session_state.get("_picked", [])
         if len(picked) < 2:
             sc_.info(
-                f"Click two dots on the chart to set the leg — "
-                f"{len(picked)} of 2 chosen.",
+                f"Click two triangles on the chart, or drag a box across the "
+                f"swing — {len(picked)} of 2 chosen.",
                 icon="👆",
             )
         else:
@@ -681,15 +683,25 @@ if "Trend & Fibonacci" in chosen:
     if fib_anchor == "Click two points":
         before = list(st.session_state.get("_picked", []))
         sel = (st.session_state.get("chart") or {}).get("selection") or {}
+
+        incoming: list[tuple[pd.Timestamp, float]] = []
         for p in sel.get("points", []):
             try:
-                ts = pd.Timestamp(p["x"])
+                incoming.append((pd.Timestamp(p["x"]), float(p["y"])))
             except Exception:  # noqa: BLE001
                 continue
+
+        if len(incoming) >= 2:
+            # A box drag caught a range: take its extremes in time, so
+            # dragging across a swing anchors the whole leg in one gesture.
+            incoming.sort()
+            st.session_state["_picked"] = [incoming[0], incoming[-1]]
+        elif incoming:
+            ts, price = incoming[0]
             picks = st.session_state.setdefault("_picked", [])
             if not any(t == ts for t, _ in picks):
                 # Keep the two most recent, oldest-first along the x-axis.
-                picks.append((ts, float(p["y"])))
+                picks.append((ts, price))
                 st.session_state["_picked"] = sorted(picks[-2:])
         # The sidebar has already drawn by the time clicks are read, so its
         # "n of 2 chosen" line would lag a run behind without this. Guarded
@@ -806,9 +818,10 @@ fig = charting.build(
             f: view_hist[f]
             for f in st.session_state.get("_snap_fields", ["High", "Low"])
         }
-        if "Trend & Fibonacci" in chosen and fib_anchor == "Click two points"
+        if picking
         else None
     ),
+    dragmode="select" if picking else "pan",
 )
 st.plotly_chart(
     fig,
