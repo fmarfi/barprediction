@@ -394,6 +394,29 @@ def test_malformed_notes_are_dropped_not_raised():
     assert len(sc.notes) == 1
 
 
+def test_note_offsets_round_trip_and_default():
+    bars = UP.copy()
+    bars.index = pd.bdate_range("2026-08-13", periods=2)
+    notes = [
+        {"ts": "2026-08-13", "price": 110.0, "text": "nudged", "dx": 40, "dy": -60},
+        {"ts": "2026-08-14", "price": 96.0, "text": "default placement"},
+    ]
+    sc = store.from_json_bytes(store.to_json_bytes("n", "X", "1d", bars, notes))
+    assert np.isclose(sc.notes[0]["dx"], 40.0)
+    assert np.isclose(sc.notes[0]["dy"], -60.0)
+    # An unpositioned note sits just above what it points at.
+    assert np.isclose(sc.notes[1]["dx"], 0.0)
+    assert np.isclose(sc.notes[1]["dy"], -34.0)
+
+
+def test_note_offset_zero_is_kept_not_defaulted():
+    """dy=0 is a real position and must not be replaced by the default."""
+    cleaned = store.clean_notes(
+        [{"ts": "2026-08-13", "price": 1.0, "text": "flat", "dx": 0, "dy": 0}]
+    )
+    assert np.isclose(cleaned[0]["dy"], 0.0)
+
+
 def test_files_without_notes_still_load():
     bars = UP.copy()
     bars.index = pd.bdate_range("2026-08-13", periods=2)

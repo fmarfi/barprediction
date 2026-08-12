@@ -280,14 +280,24 @@ ratio depends on session length.
 
 ## Reading the chart
 
+**Price style** sits beside the indicator pills, above the chart:
+**Candles**, **OHLC bars** or **Line**.
+
 **Notes on the chart** — under the bars table. Type the text, pick the bar
 and the price, press **Add**, and it appears as a labelled box with an arrow
-pointing at that spot. Long notes wrap. Remove one with the ✕ beside it.
-Notes are saved and loaded with the scenario, so a downloaded file carries
-your annotations with it.
+pointing at that spot. Long notes wrap.
 
-**Price style** (sidebar, Display) switches between **Candles**, **OHLC
-bars** and **Line**. All three show the same bars — OHLC draws open and
+Notes are listed in an editable table: change the text, the bar it points
+at, the price, or the **Nudge** offsets that push the box away from that
+point. Add and remove rows there too.
+
+> You can also **drag a note** on the chart, along with any freehand shape.
+> That is a quick visual nudge only — Plotly does not report the new
+> position back to the app, so it resets on the next redraw. Set the Nudge
+> columns to make a position permanent.
+
+Notes are saved and loaded with the scenario, offsets included, so a
+downloaded file carries your annotations exactly as you placed them. All three show the same bars — OHLC draws open and
 close as ticks either side of the range, Line plots closes only.
 
 - Prices sit on the **right**, trading-platform style.

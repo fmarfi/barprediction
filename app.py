@@ -390,11 +390,6 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Display")
-    chart_style = st.radio(
-        "Price style", list(charting.STYLES), horizontal=True,
-        help="OHLC bars show the same data with open and close as ticks; "
-        "Line plots closes only.",
-    )
     show_tail = st.slider(
         "History bars shown",
         40,
@@ -536,7 +531,10 @@ head[4].metric("Source", src_name.split(" - ")[-1].title())
 
 # --------------------------------------------------- indicator selection
 
-chosen = st.pills(
+# Price style sits with the indicator pills rather than in the sidebar:
+# it changes how the chart reads, so it belongs next to the chart.
+pill_col, style_col = st.columns([5, 2], vertical_alignment="center")
+chosen = pill_col.pills(
     "Indicators",
     INDICATORS,
     selection_mode="multi",
@@ -545,6 +543,13 @@ chosen = st.pills(
     key="chosen",
 )
 chosen = chosen or []
+chart_style = style_col.segmented_control(
+    "Price style",
+    list(charting.STYLES),
+    default=charting.CANDLES,
+    label_visibility="collapsed",
+    key="chart_style",
+) or charting.CANDLES
 
 # Fibonacci leg controls sit here, beside the chart they act on, rather than
 # inside a collapsed sidebar expander where nobody finds them.
@@ -857,6 +862,14 @@ st.plotly_chart(
             "eraseshape",
         ],
         "modeBarButtonsToRemove": ["lasso2d", "autoScale2d"],
+        # Notes and freehand shapes can be dragged around in the browser.
+        # Plotly does not report the new position back, so a drag is a quick
+        # visual nudge; the Nudge columns under the table make it permanent.
+        "edits": {
+            "annotationPosition": True,
+            "annotationTail": True,
+            "shapePosition": True,
+        },
         # Skip the hover-driven redraw plotly does while a drag is in flight.
         "plotGlPixelRatio": 1,
     },
@@ -1002,13 +1015,37 @@ with sig_col:
             )
             st.rerun()
 
-        for i, n in enumerate(list(st.session_state["notes"])):
-            row, drop = st.columns([9, 1.2], vertical_alignment="center")
-            row.caption(
-                f"**{n['text']}** — {pd.Timestamp(n['ts']):%d %b} @ {n['price']:,.2f}"
+        if st.session_state["notes"]:
+            st.caption(
+                "Drag a note on the chart to move it. To make a position "
+                "stick, set the nudge here — a browser drag is not readable "
+                "back, so it resets on the next redraw."
             )
-            if drop.button("✕", key=f"delnote{i}", help="Remove this note"):
-                st.session_state["notes"].pop(i)
+            table = pd.DataFrame(st.session_state["notes"])
+            table["ts"] = pd.to_datetime(table["ts"]).dt.strftime("%Y-%m-%d")
+            edited_notes = st.data_editor(
+                table[["text", "ts", "price", "dx", "dy", ]],
+                width="stretch",
+                hide_index=True,
+                num_rows="dynamic",
+                column_config={
+                    "text": st.column_config.TextColumn("Note", width="large"),
+                    "ts": st.column_config.TextColumn("Points at", width="small"),
+                    "price": st.column_config.NumberColumn(
+                        "Price", format="%.2f", width="small"
+                    ),
+                    "dx": st.column_config.NumberColumn(
+                        "Nudge →", help="Pixels right of the point", step=5
+                    ),
+                    "dy": st.column_config.NumberColumn(
+                        "Nudge ↑", help="Pixels above the point (negative)", step=5
+                    ),
+                },
+                key="notes_editor",
+            )
+            cleaned_notes = store.clean_notes(edited_notes.to_dict("records"))
+            if cleaned_notes != st.session_state["notes"]:
+                st.session_state["notes"] = cleaned_notes
                 st.rerun()
 
     st.markdown("#### Triggered signals")

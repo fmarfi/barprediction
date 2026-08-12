@@ -102,6 +102,12 @@ def clean_notes(notes) -> list[dict]:
                     "ts": str(pd.Timestamp(n["ts"])),
                     "price": float(n["price"]),
                     "text": str(n["text"]),
+                    # Pixel offset of the box from the point it marks, so a
+                    # note can be nudged clear of the candles it describes.
+                    "dx": float(n.get("dx", 0) or 0),
+                    "dy": float(
+                        -34 if n.get("dy") is None else n.get("dy")
+                    ),
                 }
             )
         except Exception:  # noqa: BLE001
@@ -126,7 +132,10 @@ def _payload(
             {"ts": str(ts), **{c: float(row[c]) for c in COLUMNS}}
             for ts, row in bars[COLUMNS].iterrows()
         ],
-        "notes": clean_notes(notes),
+        "notes": [
+            {k: n[k] for k in ("ts", "price", "text", "dx", "dy")}
+            for n in clean_notes(notes)
+        ],
     }
 
 

@@ -528,6 +528,11 @@ def _add_notes(fig: go.Figure, notes: list[dict] | None, t: dict) -> None:
             text = str(n["text"]).strip()
             x = _dt(pd.Timestamp(n["ts"]))
             y = float(n["price"])
+            # Offset of the box from what it points at, in pixels. Dragging
+            # a note in the browser moves exactly this, and the same numbers
+            # are editable in the table so a position can be made permanent.
+            dx = float(n.get("dx", 0) or 0)
+            dy = float(n.get("dy", -34) if n.get("dy") is not None else -34)
         except Exception:  # noqa: BLE001 - skip a malformed note, keep the rest
             continue
         if not text:
@@ -545,9 +550,10 @@ def _add_notes(fig: go.Figure, notes: list[dict] | None, t: dict) -> None:
             arrowsize=0.9,
             arrowwidth=1,
             arrowcolor=t["muted"],
-            ax=0,
-            ay=-34,
+            ax=dx,
+            ay=dy,
             align="left",
+            captureevents=True,
             font=dict(size=10, color=t["text"]),
             bgcolor=t["tag_bg"],
             bordercolor=t["muted"],
