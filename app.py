@@ -147,7 +147,9 @@ with st.sidebar:
     # Re-rolling has to invalidate remembered bars, or a switch back would
     # restore the previous path and the new seed would look ignored.
     fill_sig = (fill_mode, int(fill_seed))
-    if st.session_state.get("_fill_sig") not in (None, fill_sig):
+    prev_fill = st.session_state.get("_fill_sig")
+    fill_changed = prev_fill is not None and prev_fill != fill_sig
+    if fill_changed:
         st.session_state["bars_memo"] = {}
     st.session_state["_fill_sig"] = fill_sig
 
@@ -161,12 +163,33 @@ with st.sidebar:
             note += f" (trimmed to {MAX_HORIZON})"
         st.session_state["_load_note"] = note
 
+    def _remember_fill_source(src_bars, src_iv: str) -> None:
+        """Keep the coarse bars an upsample came from.
+
+        Without them, changing the gap-fill setting could only affect the
+        *next* conversion -- the finer bars already on screen would keep the
+        path they were born with.
+        """
+        try:
+            upsampled = resample.ratio(src_iv, interval) > 1
+        except resample.IntervalMismatch:
+            upsampled = False
+        if upsampled:
+            st.session_state["fill_source"] = {
+                "interval": src_iv,
+                "bars": src_bars.copy(),
+                "target": interval,
+            }
+        else:
+            st.session_state.pop("fill_source", None)
+
     if st.session_state.get("_pending_scenario") is not None:
         try:
             sc = st.session_state.pop("_pending_scenario")
             conv = resample.convert(
                 sc.bars, sc.interval, interval, fill=fill_mode, seed=int(fill_seed)
             )
+            _remember_fill_source(sc.bars, sc.interval)
             _stage(
                 conv,
                 f"Loaded “{sc.name}” ({sc.symbol} {sc.interval})"
@@ -218,11 +241,39 @@ with st.sidebar:
                 conv = kept
                 note = f"Restored your {len(kept)} × {interval} bars"
 
+            _remember_fill_source(have, prev_iv)
             _stage(conv, note)
         except resample.IntervalMismatch as e:
             # Intraday <-> daily has no fixed ratio; reseed rather than guess.
             st.session_state["_load_error"] = f"Kept your bars out of it — {e}"
             st.session_state["_force_reseed"] = True
+
+    # Changing the fill setting re-draws the gaps in the bars already on
+    # screen, rather than waiting for the next interval switch. Only when
+    # those bars are still exactly what the old setting produced -- if they
+    # have been hand-edited since, re-filling would throw the edits away.
+    if fill_changed and "_loaded_bars" not in st.session_state:
+        fsrc = st.session_state.get("fill_source")
+        cur = st.session_state.get("bars")
+        if fsrc and cur is not None and fsrc["target"] == interval:
+            try:
+                as_was = resample.convert(
+                    fsrc["bars"], fsrc["interval"], interval,
+                    fill=prev_fill[0], seed=prev_fill[1],
+                )
+                if resample.same_ohlc(as_was, cur):
+                    redone = resample.convert(
+                        fsrc["bars"], fsrc["interval"], interval,
+                        fill=fill_mode, seed=int(fill_seed),
+                    )
+                    _stage(redone, f"Re-filled the gaps — {fill_label.lower()}")
+                else:
+                    st.session_state["_load_note"] = (
+                        "Kept your edited bars. Switch interval and back to "
+                        "re-fill the gaps with this setting."
+                    )
+            except resample.IntervalMismatch:
+                pass
 
     st.divider()
     st.subheader("Bars to predict")
@@ -418,6 +469,9 @@ if (
     or (loaded is None and st.session_state.get("_src_prev") != src_sig)
 ):
     st.session_state["bars_memo"] = {}
+    # Freshly seeded bars did not come from an upsample, so there is no
+    # coarse source left to re-fill from.
+    st.session_state.pop("fill_source", None)
 st.session_state["_src_prev"] = src_sig
 st.session_state.setdefault("bars_memo", {})[interval] = st.session_state[
     "bars"

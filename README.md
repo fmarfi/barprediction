@@ -200,6 +200,12 @@ min of daily lows  == the weekly low
 - **Straight line** — a monotonic path from open to close. Nothing between
   your endpoints moves against the direction you drew.
 
+Changing the mode or the seed **re-draws the gaps in the bars already on
+screen** — you do not have to switch interval and back. The coarse bars the
+upsample came from are kept for exactly this. If you have hand-edited the
+finer bars since, they are left alone and a message says so, because
+re-filling would discard your edits.
+
 Either way the bars you drew are reproduced exactly, and nothing escapes
 their range. Going the other direction (daily → weekly) is ordinary OHLC
 aggregation, and a short final group still becomes a bar.
