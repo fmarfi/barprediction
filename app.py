@@ -1038,14 +1038,20 @@ with sig_col:
             "Note", "", placeholder="e.g. gap fills here", key="note_text",
             label_visibility="collapsed",
         )
-        all_dates = [d.strftime("%Y-%m-%d") for d in full.index]
-        note_date = nd.selectbox(
-            "On", all_dates, index=len(all_dates) - 1, label_visibility="collapsed"
+        # Any date, not just one with a bar on it: a note may want to sit in
+        # a gap, past the last bar, or anywhere else that reads well.
+        note_date = nd.date_input(
+            "On",
+            value=full.index[-1].date(),
+            label_visibility="collapsed",
+            key="note_date",
         )
-        default_price = float(full.loc[pd.Timestamp(note_date), "High"])
         note_price = npr.number_input(
-            "At", value=round(default_price, 2), step=1.0,
-            label_visibility="collapsed", key="note_price",
+            "At",
+            value=round(float(full["Close"].iloc[-1]), 2),
+            step=1.0,
+            label_visibility="collapsed",
+            key="note_price",
         )
         if nb.button("Add", width="stretch", disabled=not note_text.strip()):
             st.session_state.setdefault("notes", []).append(
