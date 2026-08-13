@@ -349,10 +349,13 @@ def build(
         tickfont=dict(color=t["muted"], size=10),
         # Prices on the right, trading-platform style.
         side="right",
-        # fixedrange=False is what makes the y axis draggable/scrollable on
-        # its own: drag the axis to stretch it, double-click to autoscale.
-        fixedrange=False,
     )
+    # Only the price axis is draggable. Dragging an oscillator's axis pulls
+    # it off the range its levels are defined against -- an RSI stretched
+    # past 0-100 puts its own 30 and 70 lines somewhere meaningless -- so
+    # the indicator panes are locked and left to autoscale.
+    fig.update_yaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=False, row=1, col=1)
     fig.update_xaxes(fixedrange=False)
     if log_scale:
         fig.update_yaxes(type="log", row=1, col=1)

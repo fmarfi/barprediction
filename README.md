@@ -334,8 +334,12 @@ close as ticks either side of the range, Line plots closes only.
 - **Triangles** mark bars where indicator events fire — green/up for bullish,
   red/down for bearish. Hover one to see every event on that bar.
 - The scenario region is **shaded**, so drawn bars never read as real history.
-- **Zoom the y axis on its own** by dragging the price axis up or down;
+- **Zoom the price axis on its own** by dragging it up or down;
   double-click to autoscale. Scroll zooms both axes, drag pans.
+- **Indicator panes are locked** and autoscale themselves. Dragging an
+  oscillator's axis would pull it off the range its levels are defined
+  against — an RSI stretched past 0–100 puts its own 30 and 70 lines
+  somewhere meaningless.
 
 ## If the chart feels slow
 
