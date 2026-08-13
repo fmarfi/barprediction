@@ -8,6 +8,7 @@ does to them.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -23,6 +24,17 @@ from core import (
     store,
     trends,
 )
+
+# Run with `python app.py` -- as an IDE's Run button does -- and Streamlit
+# has no script context, so every widget call warns and no app appears. Say
+# what to do instead, before the wall of warnings starts.
+if not st.runtime.exists():
+    sys.stderr.write(
+        "\n  This is a Streamlit app, so it needs Streamlit to run it:\n\n"
+        "      python -m streamlit run app.py\n\n"
+        "  Running it directly only prints 'missing ScriptRunContext'.\n\n"
+    )
+    raise SystemExit(1)
 
 st.set_page_config(
     page_title="BIST Bar Prediction", layout="wide", initial_sidebar_state="expanded"
