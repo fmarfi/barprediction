@@ -290,6 +290,20 @@ ratio depends on session length.
 
 ## Reading the chart
 
+Laid out along the lines trading platforms use
+([TradingView's chart settings](https://www.tradingview.com/support/solutions/43000748166-how-to-configure-your-supercharts/)
+were the reference):
+
+- A **status line** top-left — symbol, interval, and the last bar's O/H/L/C
+  with the change, tinted green or red. It shows the last bar rather than
+  the hovered one: hover stays in the browser and never reaches the server.
+- **Indicator legend** on the row beneath it.
+- **Empty space past the last bar**, about 9% of the visible span, so the
+  newest bar is not jammed against the price scale and there is room to
+  project a level or place a note ahead of price.
+- A faint **watermark** of symbol and interval behind the candles.
+- **Price scale on the right**, with a value badge per series.
+
 **Price style** sits beside the indicator pills, above the chart:
 **Candles**, **OHLC bars** or **Line**.
 

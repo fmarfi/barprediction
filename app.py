@@ -883,6 +883,7 @@ fig = charting.build(
     dragmode="select" if picking else "pan",
     style=chart_style,
     notes=st.session_state.get("notes", []),
+    interval=interval,
 )
 st.plotly_chart(
     fig,

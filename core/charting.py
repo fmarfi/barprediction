@@ -29,6 +29,7 @@ THEMES = {
         "divider": "rgba(150,150,150,0.65)",
         "level": "rgba(150,155,165,0.45)",
         "tag_bg": "rgba(14,17,23,0.92)",
+        "watermark": "rgba(150,165,190,0.045)",
     },
     "light": {
         "template": "plotly_white",
@@ -41,6 +42,7 @@ THEMES = {
         "divider": "rgba(90,95,105,0.6)",
         "level": "rgba(110,118,130,0.5)",
         "tag_bg": "rgba(255,255,255,0.92)",
+        "watermark": "rgba(60,75,100,0.05)",
     },
 }
 
@@ -117,6 +119,8 @@ def build(
     dragmode: str = "pan",
     style: str = CANDLES,
     notes: list[dict] | None = None,
+    interval: str = "",
+    right_pad: float = 0.09,
     height_price: int = 520,
     height_panel: int = 165,
 ) -> go.Figure:
@@ -204,7 +208,9 @@ def build(
         for field, series in pickable.items():
             if series is None or series.empty:
                 continue
-            style = PICK_STYLES.get(field, PICK_STYLES["Close"])
+            # Not `style`: that name holds the chart style parameter, and
+            # rebinding it here would quietly break anything below.
+            pick = PICK_STYLES.get(field, PICK_STYLES["Close"])
             fig.add_trace(
                 go.Scatter(
                     x=series.index,
@@ -212,10 +218,10 @@ def build(
                     mode="markers",
                     name=field,
                     marker=dict(
-                        size=style["size"],
-                        symbol=style["symbol"],
-                        color=style["color"],
-                        line=dict(width=1, color=style["edge"]),
+                        size=pick["size"],
+                        symbol=pick["symbol"],
+                        color=pick["color"],
+                        line=dict(width=1, color=pick["edge"]),
                     ),
                     hovertemplate=(
                         "%{x|%d %b %Y}<br>" + field + " %{y:,.2f}"
@@ -226,6 +232,37 @@ def build(
                 row=1,
                 col=1,
             )
+
+    # Status line: the last bar's OHLC, as trading platforms print above the
+    # chart. Static rather than following the cursor, because hover stays in
+    # the browser and never reaches the server.
+    last = (predicted if not predicted.empty else history).iloc[-1]
+    prev_close = float(history["Close"].iloc[-1] if not predicted.empty else (
+        history["Close"].iloc[-2] if len(history) > 1 else last["Close"]
+    ))
+    chg = float(last["Close"]) - prev_close
+    pct = chg / prev_close * 100.0 if prev_close else 0.0
+    tone = UP if chg >= 0 else DOWN
+    fig.add_annotation(
+        xref="paper",
+        yref="paper",
+        x=0,
+        y=1.0,
+        xanchor="left",
+        yanchor="bottom",
+        yshift=34,
+        showarrow=False,
+        align="left",
+        text=(
+            f"<b>{symbol}</b>  <span style='color:{t['muted']}'>{interval}</span>   "
+            f"<span style='color:{t['muted']}'>O</span> {last['Open']:,.2f}  "
+            f"<span style='color:{t['muted']}'>H</span> {last['High']:,.2f}  "
+            f"<span style='color:{t['muted']}'>L</span> {last['Low']:,.2f}  "
+            f"<span style='color:{t['muted']}'>C</span> {last['Close']:,.2f}  "
+            f"<span style='color:{tone}'>{chg:+,.2f} ({pct:+.2f}%)</span>"
+        ),
+        font=dict(size=11, color=t["text"]),
+    )
 
     _add_overlays(fig, overlays)
 
@@ -251,7 +288,7 @@ def build(
         height=total,
         # Right margin holds the price axis ticks and, beyond them, the
         # last-value badges.
-        margin=dict(l=4, r=96, t=52, b=4),
+        margin=dict(l=4, r=96, t=74, b=4),
         xaxis_rangeslider_visible=False,
         hovermode="x unified" if unified_hover else "x",
         hoverdistance=8,
@@ -265,7 +302,7 @@ def build(
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.012,
+            y=1.005,
             x=0,
             bgcolor="rgba(0,0,0,0)",
             font=dict(size=11, color=t["text"]),
@@ -330,6 +367,34 @@ def build(
 
     # Hide weekend gaps so daily candles sit flush.
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+
+    # Breathing room past the last bar, the way trading platforms leave it.
+    # Without it the newest bar is jammed against the price scale, and there
+    # is nowhere to project a level or place a note ahead of price.
+    spine = predicted if not predicted.empty else history
+    if right_pad > 0 and len(spine) > 1 and len(history) > 1:
+        step = pd.Series(history.index).diff().median()
+        span = len(history) + len(predicted)
+        if pd.notna(step) and step > pd.Timedelta(0):
+            fig.update_xaxes(
+                range=[
+                    _dt(history.index[0]),
+                    _dt(spine.index[-1] + step * max(1, round(span * right_pad))),
+                ]
+            )
+
+    # Symbol and interval behind the candles, as a quiet reminder of what is
+    # on screen -- the chart is often read without the surrounding page.
+    fig.add_annotation(
+        xref="paper",
+        yref="paper",
+        x=0.5,
+        y=0.55,
+        text=f"{symbol}  {interval}".strip(),
+        showarrow=False,
+        font=dict(size=40, color=t["watermark"]),
+        opacity=1.0,
+    )
 
     # Plotly greys out everything outside a selection, and an empty
     # selection -- which is what a double-click leaves behind -- greys out
