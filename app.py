@@ -917,13 +917,19 @@ st.plotly_chart(
             "eraseshape",
         ],
         "modeBarButtonsToRemove": ["lasso2d", "autoScale2d"],
-        # Notes and freehand shapes can be dragged around in the browser.
-        # Plotly does not report the new position back, so a drag is a quick
-        # visual nudge; the Nudge columns under the table make it permanent.
+        # Notes can be dragged for a quick visual nudge; the Nudge columns
+        # under the table make a position permanent.
+        #
+        # shapePosition is deliberately absent. Plotly: shape.editable "has
+        # no effect when the older editable shapes mode is enabled via
+        # config.editable or config.edits.shapePosition" -- so switching it
+        # on silently unlocks every shape, including RSI's 50 line and the
+        # Fibonacci levels, no matter what editable=False says. Leaving it
+        # off is what actually locks them. The cost is that freehand shapes
+        # cannot be repositioned after drawing; erase and redraw instead.
         "edits": {
             "annotationPosition": True,
             "annotationTail": True,
-            "shapePosition": True,
         },
         # Skip the hover-driven redraw plotly does while a drag is in flight.
         "plotGlPixelRatio": 1,

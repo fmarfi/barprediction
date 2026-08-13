@@ -323,7 +323,13 @@ point. Add and remove rows there too.
 > Reference lines are **locked**: RSI's 50, Stochastic's 20/80, DMI's 25,
 > the Fibonacci levels and the scenario shading cannot be dragged. A
 > reference level nudged off its own value would quietly lie about what it
-> marks. Only shapes you draw yourself can be moved.
+> marks.
+>
+> Locking them costs the ability to reposition a freehand shape after
+> drawing it — erase and redraw instead. The two cannot coexist: Plotly's
+> per-shape `editable` flag "has no effect when the older editable shapes
+> mode is enabled via `config.edits.shapePosition`", so switching that on
+> to allow dragging unlocks *every* shape on the chart.
 
 Notes are saved and loaded with the scenario, offsets included, so a
 downloaded file carries your annotations exactly as you placed them. All three show the same bars — OHLC draws open and
